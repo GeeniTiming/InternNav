@@ -101,14 +101,24 @@ PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' OMP_NUM_THREADS=1 \
   tests/unit_test/test_cache_pilot.py tests/unit_test/test_cache_readout_diagnostic.py
 
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
-  python scripts/eval/cache_pilot.py prepare --run-dir data/cache_pilot_03 --episodes 1
+  python scripts/eval/cache_pilot.py prepare --run-dir data/cache_pilot_04 --episodes 1
+
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+  python scripts/eval/cache_readout_diagnostic.py --check-entrypoint \
+  --run-dir data/cache_pilot_04 --reference-control data/cache_pilot_01/control
 
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES=0 \
   python -u scripts/eval/cache_readout_diagnostic.py \
-  --run-dir data/cache_pilot_03 --reference-control data/cache_pilot_01/control
+  --run-dir data/cache_pilot_04 --reference-control data/cache_pilot_01/control
 ```
 
-输出为 `data/cache_pilot_03/paired_diagnostic/summary.json` 及 `readouts.jsonl`、
+入口通过 `Evaluator.evaluators` 获取真实评测器类；上游注册装饰器不返回类，
+因此模块中的同名类符号为 `None`，不可直接修改它的 `__init__`。
+`--check-entrypoint` 只校验配置、输入和注册表，不创建诊断输出、不初始化模型或环境。
+预期打印 `DIAGNOSTIC_ENTRYPOINT_CHECK=PASS`。旧入口失败留下的 `cache_pilot_03`
+保留不覆盖，以上命令使用新的 `cache_pilot_04`。
+
+输出为 `data/cache_pilot_04/paired_diagnostic/summary.json` 及 `readouts.jsonl`、
 `plans.jsonl`。`next_actual_action_index` 用于关联局部计划与实际动作序列，采用零基索引。
 摘要包含原始执行轨迹是否仍匹配旧 control、原始读出/S1 重复是否逐位一致，以及
 缓存表征是否改变了局部动作。`first_cache_plan_difference` 保存第一次前四动作差异。
@@ -127,8 +137,9 @@ PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES=0 \
 
 本分支已在 Python 3.12 / PyTorch 2.6.0 CPU / Transformers 4.51.0 下通过
 上述两个文件的 **34 项测试**；这不是用户服务器的 Python 3.9 / CUDA / BF16 验证。
-新增旁路诊断另有 **7 项 CPU 测试**，覆盖原始输出与 RNG 的隔离、异常恢复、
-解码器原地修改防护和真实 DynamicCache 追加/裁剪；三份测试共 41 项。
+新增旁路诊断另有 **8 项 CPU 测试**，覆盖原始输出与 RNG 的隔离、异常恢复、
+解码器原地修改防护、真实 DynamicCache 追加/裁剪及实际注册装饰器返回 None 的行为；
+三份测试共 42 项。
 
 - 社区 tiny-model CPU 回归：默认路径、缓存长度、mRoPE、EOS、重复读取、异常清理及数值对照。
 - 本分支 CPU 测试：实验选择、配置保持、输入变更检测、结果隔离、相机动作、位姿和四元数对照。

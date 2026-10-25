@@ -1,5 +1,6 @@
 """Diagnostic state isolation with stochastic S1 doubles; no Habitat or weights."""
 
+import ast
 import importlib.util
 import random
 from pathlib import Path
@@ -190,3 +191,41 @@ def test_nonfinite_or_differently_shaped_outputs_are_not_hidden(diagnostic):
     assert not result['finite'] and result['max_abs_error'] is None
     with pytest.raises(ValueError, match='shapes differ'):
         diagnostic.tensor_difference(torch.zeros(1), torch.zeros(2))
+
+
+def test_actual_registry_returns_none_symbol_but_registered_constructor_can_be_instrumented(diagnostic):
+    # Compile the actual, dependency-free class definition, leaving optional
+    # simulator/network imports out of this CPU regression test.
+    path = Path(__file__).resolve().parents[2] / 'internnav/evaluator/base.py'
+    tree = ast.parse(path.read_text())
+    definition = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == 'Evaluator')
+    scope = {'EvalCfg': object}
+    exec(compile(ast.Module(body=[definition], type_ignores=[]), str(path), 'exec'), scope)
+    registry = scope['Evaluator']
+    calls = []
+
+    @registry.register('habitat_vln')
+    class DecoratedEvaluator:
+        def __init__(self, config):
+            self.config = config
+            calls.append('native_init')
+
+    assert DecoratedEvaluator is None
+    actual_class = diagnostic.registered_evaluator(registry, 'habitat_vln')
+    native_init = actual_class.__init__
+
+    def instrumented_init(self, config):
+        native_init(self, config)
+        calls.append('observer_attached')
+
+    try:
+        actual_class.__init__ = instrumented_init
+        config = SimpleNamespace(eval_type='habitat_vln')
+        instance = registry.init(config)
+        assert isinstance(instance, actual_class) and instance.config is config
+        assert calls == ['native_init', 'observer_attached']
+    finally:
+        actual_class.__init__ = native_init
+    assert actual_class.__init__ is native_init
+    with pytest.raises(RuntimeError, match='No evaluator class registered'):
+        diagnostic.registered_evaluator(registry, 'missing')

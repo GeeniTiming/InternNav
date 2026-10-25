@@ -204,6 +204,15 @@ def load_pilot():
     return module
 
 
+def registered_evaluator(registry, eval_type):
+    # Evaluator.register stores the class but its decorator returns None, so
+    # the decorated module's class symbol is not the evaluator constructor.
+    evaluator_class = registry.evaluators.get(eval_type)
+    if not isinstance(evaluator_class, type):
+        raise RuntimeError('No evaluator class registered for: ' + eval_type)
+    return evaluator_class
+
+
 def run(args):
     sys.path.insert(0, str(ROOT))
     pilot = load_pilot()
@@ -223,8 +232,15 @@ def run(args):
     if native_cfg.agent.model_settings.get('kv_cache_continuation'):
         raise ValueError('The acting policy must use the native full replay')
 
-    from internnav.habitat_extensions.vln.habitat_vln_evaluator import HabitatVLNEvaluator
+    from internnav.evaluator import Evaluator
+    import internnav.habitat_extensions.vln.habitat_vln_evaluator  # noqa: F401
     from internnav.model.utils.vln_utils import traj_to_actions
+
+    evaluator_class = registered_evaluator(Evaluator, native_cfg.eval_type)
+    if args.check_entrypoint:
+        print('DIAGNOSTIC_ENTRYPOINT_CHECK=PASS',
+              'evaluator=', evaluator_class.__module__ + '.' + evaluator_class.__qualname__)
+        return
 
     directory = run_dir / 'paired_diagnostic'
     directory.mkdir(exist_ok=False)
@@ -232,7 +248,7 @@ def run(args):
                for kind in ('readouts', 'plans')}
     observers = []
     env_steps = []
-    original_init = HabitatVLNEvaluator.__init__
+    original_init = evaluator_class.__init__
     summary = {'status': 'running', 'schema': 'dualvln_paired_readout.v1',
                'acting_path': 'native_full_replay', 'timing_valid_for_speed_comparison': False,
                'diagnostic_sha256': pilot.sha256(__file__),
@@ -269,7 +285,7 @@ def run(args):
         evaluator.env.step = step
         env_steps.append((evaluator.env, original_step))
 
-    HabitatVLNEvaluator.__init__ = instrumented_init
+    evaluator_class.__init__ = instrumented_init
     try:
         pilot.run_arm(SimpleNamespace(run_dir=str(run_dir), arm='control', profile_stages=False))
         actual_summary = pilot.read_json(run_dir / 'control/pilot_summary.json')
@@ -313,7 +329,7 @@ def run(args):
         summary.update(status='failed', error=repr(error))
         raise
     finally:
-        HabitatVLNEvaluator.__init__ = original_init
+        evaluator_class.__init__ = original_init
         for observer in observers:
             observer.close()
         for env, step in env_steps:
@@ -329,4 +345,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--run-dir', required=True)
     parser.add_argument('--reference-control', required=True)
+    parser.add_argument('--check-entrypoint', action='store_true',
+                        help='Resolve the registered evaluator without creating outputs or initializing a model')
     run(parser.parse_args())
