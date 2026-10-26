@@ -304,5 +304,112 @@ class RngTests(unittest.TestCase):
         self.assertEqual(state, {'cpu': 10, 'cuda': [20, 30]})
 
 
+class ReferenceSchemaTests(unittest.TestCase):
+    @staticmethod
+    def rows():
+        return [dict(scene_id='scene', episode_id='15', action=4, done=False,
+                     position=[1., 2., 3.], orientation_wxyz=[.5, .5, .5, .5]) for _ in range(12)]
+
+    def test_reported_typo_requires_explicit_flag_and_preserves_all_values(self):
+        rows = self.rows()
+        expected = copy.deepcopy(rows)
+        rows[10]['o rientation_wxyz'] = rows[10].pop('orientation_wxyz')
+        before = copy.deepcopy(rows)
+        with self.assertRaisesRegex(ValueError, 'repair-known-key-typo'):
+            PROBE.normalize_reference(rows)
+        normalized, edits = PROBE.normalize_reference(rows, True)
+        self.assertEqual(normalized, expected)
+        self.assertEqual(rows, before)
+        self.assertEqual(len(edits), 1)
+        self.assertEqual(edits[0]['record_index_zero_based'], 10)
+        self.assertEqual(edits[0]['quaternion_value_unchanged'], expected[10]['orientation_wxyz'])
+
+    def test_clean_reference_has_no_repairs(self):
+        rows = self.rows()
+        normalized, edits = PROBE.normalize_reference(rows)
+        self.assertEqual(normalized, rows)
+        self.assertEqual(edits, [])
+        normalized[0]['position'][0] = 99
+        self.assertEqual(rows[0]['position'][0], 1.)
+
+    def test_other_indices_ambiguous_keys_and_other_missing_keys_are_rejected(self):
+        for index, field in ((9, 'o rientation_wxyz'), (10, 'rotation_wxyz')):
+            rows = self.rows()
+            rows[index][field] = rows[index].pop('orientation_wxyz')
+            with self.assertRaises(ValueError):
+                PROBE.normalize_reference(rows, True)
+        rows = self.rows()
+        rows[10]['o rientation_wxyz'] = list(rows[10]['orientation_wxyz'])
+        with self.assertRaisesRegex(ValueError, 'ambiguous'):
+            PROBE.normalize_reference(rows, True)
+
+    def test_missing_nonfinite_malformed_or_nonunit_pose_is_not_filled(self):
+        for bad in ([1., 0., 0.], [0., 0., 0., 0.], [float('nan'), 0., 0., 1.],
+                    [1., 0., 0., float('inf')], [True, 0., 0., 0.]):
+            rows = self.rows()
+            rows[10]['o rientation_wxyz'] = bad
+            rows[10].pop('orientation_wxyz')
+            with self.assertRaises(ValueError):
+                PROBE.normalize_reference(rows, True)
+        rows = self.rows()
+        rows[10].pop('orientation_wxyz')
+        with self.assertRaisesRegex(ValueError, 'missing'):
+            PROBE.normalize_reference(rows, True)
+
+    def test_invalid_source_is_rejected_during_prepare_before_output_or_capture(self):
+        scratch = ROOT / 'test_scratch'
+        scratch.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as tmp:
+            root = Path(tmp).resolve()
+            source, target = root / 'source', root / 'new'
+            (source / 'control').mkdir(parents=True)
+            rows = self.rows()
+            rows[10].pop('orientation_wxyz')
+            path = source / 'control/actions.jsonl'
+            path.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+            before = path.read_bytes()
+            pilot = PROBE.sibling('cache_pilot')
+            pilot.verify_manifest = lambda path: {}
+            pilot.read_json = lambda path: ({'status': 'complete', 'stage_synchronized': False}
+                                            if path.name == 'pilot_summary.json'
+                                            else {'episodes': [ProtocolTests().episode()]})
+            capture = SimpleNamespace(prepare=mock.Mock())
+            with mock.patch.object(PROBE, 'sibling', side_effect=lambda name: pilot if name == 'cache_pilot' else capture):
+                with self.assertRaisesRegex(ValueError, 'missing'):
+                    PROBE.prepare(SimpleNamespace(source_run=str(source), run_dir=str(target)))
+            capture.prepare.assert_not_called()
+            self.assertFalse(target.exists())
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_previous_prefix_verifies_repaired_quaternion_against_independent_record(self):
+        scratch = ROOT / 'test_scratch'
+        scratch.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as tmp:
+            root = Path(tmp).resolve()
+            source, previous = root / 'source', root / 'previous'
+            (source / 'control').mkdir(parents=True)
+            (previous / 'control').mkdir(parents=True)
+            rows = self.rows()
+            raw = source / 'control/actions.jsonl'
+            raw.write_text(''.join(json.dumps(r) + '\n' for r in rows))
+            pilot = PROBE.sibling('cache_pilot')
+            pilot.write_json(previous / 'manifest.json', {
+                'physical_recovery_probe': {'source_run': str(source)},
+                'source_hashes': {str(raw): pilot.sha256(raw)}})
+            captured = previous / 'control/probe_actions.jsonl'
+            captured.write_text(json.dumps(dict(rows[0], phase='native')) + '\n')
+            result = PROBE.check_previous_prefix(previous, source, rows,
+                                                  {'prefix_action_count': 1}, pilot)
+            self.assertTrue(result['comparison']['actions_and_poses_match'])
+            changed = dict(rows[0], phase='native', orientation_wxyz=[1., 0., 0., 0.])
+            captured.write_text(json.dumps(changed) + '\n')
+            with self.assertRaisesRegex(ValueError, 'disagrees'):
+                PROBE.check_previous_prefix(previous, source, rows, {'prefix_action_count': 1}, pilot)
+            # A later source edit cannot bypass the original failed-attempt hash.
+            raw.write_text(raw.read_text() + '\n')
+            with self.assertRaisesRegex(ValueError, 'Source bytes differ'):
+                PROBE.check_previous_prefix(previous, source, rows, {'prefix_action_count': 1}, pilot)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -114,3 +114,43 @@ cohort or an aggregate efficacy result.
 CPU tests cover boundary instrumentation, exact-prefix refusal, fresh-observation
 handoff, history invariance, RNG restoration, follower STOP/budget handling and
 annotation locks. The real Habitat/GPU run must still be verified on the server.
+
+## Recovery from the reported reference-key typo
+
+The source action file was reported to contain one malformed key at zero-based
+record 10: "o rientation_wxyz". New preparation validates every reference record
+on CPU before model loading. No missing quaternion is filled and no quaternion
+is renormalized.
+
+To use the existing value under the correctly spelled key, explicitly enable
+--repair-known-key-typo. The only allowed repair is that exact key at record 10;
+a duplicate canonical key, other missing fields, malformed/nonfinite values or
+an unrecognized typo fail preparation. The original source file and all old
+manifests are preserved.
+
+Preparation writes reference_actions.jsonl and reference_audit.json in the new
+run directory and locks their hashes. Run and report compare against this
+derived reference, while original source bytes remain hash-locked as provenance.
+The audit records the old/new key, unchanged quaternion, and source/derived
+hashes. A changed script is not run against an old locked manifest.
+
+For the failed attempt in data/case15_physical_recovery_01, use:
+
+~~~bash
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+  python scripts/eval/physical_recovery_probe.py prepare \
+  --source-run data/failure_case15_01 \
+  --run-dir data/case15_physical_recovery_02 \
+  --repair-known-key-typo \
+  --previous-attempt data/case15_physical_recovery_01
+~~~
+
+This also checks the corrected source prefix against the independent 446-action
+control/probe_actions.jsonl from the failed attempt before loading a model.
+Any disagreement aborts. Expect REFERENCE_SCHEMA_CHECK=PASS with key_repairs=1
+and PREVIOUS_PREFIX_CHECK=PASS with actions=446.
+
+Then run control, repair and report using data/case15_physical_recovery_02 in all
+commands above. Keep the failed _01 directory. Its process stopped before the
+boundary check completed, so it cannot be resumed as a completed control:
+one fresh single-episode control is required.

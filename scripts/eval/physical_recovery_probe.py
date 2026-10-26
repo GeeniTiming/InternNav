@@ -40,6 +40,78 @@ def read_lines(path):
     return [json.loads(s) for s in Path(path).read_text(encoding='utf-8').splitlines() if s.strip()]
 
 
+def validate_trace(rows, label):
+    required = {'scene_id', 'episode_id', 'action', 'done', 'position', 'orientation_wxyz'}
+    if not rows:
+        raise ValueError(label + ': empty action trace')
+    for index, row in enumerate(rows):
+        missing = required - row.keys()
+        if missing:
+            raise ValueError('%s: record %d missing %s; keys=%s'
+                             % (label, index, sorted(missing), sorted(row)))
+        for field, length in (('position', 3), ('orientation_wxyz', 4)):
+            values = row[field]
+            if (not isinstance(values, list) or len(values) != length
+                    or any(isinstance(v, bool) or not isinstance(v, (int, float))
+                           or not math.isfinite(v) for v in values)):
+                raise ValueError('%s: record %d has invalid %s' % (label, index, field))
+        norm = math.sqrt(sum(v * v for v in row['orientation_wxyz']))
+        if abs(norm - 1.0) > 1e-3:
+            raise ValueError('%s: record %d has a non-unit quaternion' % (label, index))
+        if (not isinstance(row['scene_id'], str) or not row['scene_id']
+                or isinstance(row['action'], bool) or not isinstance(row['action'], int)
+                or row['action'] not in range(6) or not isinstance(row['done'], bool)):
+            raise ValueError('%s: record %d has invalid action metadata' % (label, index))
+    return rows
+
+
+def normalize_reference(rows, repair_known_key_typo=False):
+    """Rename only the reported key at record 10; never infer or change pose values."""
+    records = copy.deepcopy(rows)
+    edits = []
+    alias, canonical = 'o rientation_wxyz', 'orientation_wxyz'
+    for index, row in enumerate(records):
+        if alias in row:
+            if index != 10 or canonical in row:
+                raise ValueError('Unexpected or ambiguous orientation key typo at record ' + str(index))
+            if not repair_known_key_typo:
+                raise ValueError('Source record 10 has key "o rientation_wxyz"; use '
+                                 '--repair-known-key-typo to create an audited derived reference')
+            value = row.pop(alias)
+            row[canonical] = value
+            edits.append({'record_index_zero_based': index, 'old_key': alias, 'new_key': canonical,
+                          'quaternion_value_unchanged': copy.deepcopy(value)})
+    validate_trace(records, 'reference')
+    return records, edits
+
+
+def check_previous_prefix(previous, source, reference, protocol, pilot):
+    previous = Path(previous).resolve()
+    manifest = pilot.read_json(previous / 'manifest.json')
+    old_source = Path(manifest['physical_recovery_probe']['source_run']).resolve()
+    if old_source != source:
+        raise ValueError('Previous attempt used a different source run')
+    raw = source / 'control/actions.jsonl'
+    if manifest['source_hashes'].get(str(raw)) != pilot.sha256(raw):
+        raise ValueError('Source bytes differ from those locked by the failed attempt')
+    path = previous / 'control/probe_actions.jsonl'
+    rows = validate_trace(read_lines(path), 'previous control prefix')
+    if any(row.get('phase') != 'native' for row in rows):
+        raise ValueError('Previous prefix includes a non-native phase')
+    count = protocol['prefix_action_count']
+    if len(rows) != count:
+        raise ValueError('Previous attempt must contain exactly the declared 446-action prefix')
+    comparison = pilot.compare_traces(reference[:count], rows)
+    if not comparison['actions_and_poses_match']:
+        raise ValueError('Derived reference disagrees with the independently captured prefix: '
+                         + json.dumps(comparison))
+    return {'path': str(path), 'sha256': pilot.sha256(path), 'comparison': comparison}
+
+
+def locked_reference(root, pilot):
+    return validate_trace(read_lines(root / 'reference_actions.jsonl'), 'locked derived reference')
+
+
 def make_protocol(episode, trace):
     if (str(episode['episode_id']) != '15' or SCENE not in episode['scene_id']
             or episode['instruction']['instruction_text'] != INSTRUCTION):
@@ -87,12 +159,33 @@ def prepare(args):
     dataset = pilot.read_json(source / 'episodes.json.gz')
     if len(dataset['episodes']) != 1:
         raise ValueError('Use the verified single-episode failure capture, not a multi-episode pilot')
-    trace = read_lines(source / 'control/actions.jsonl')
+    raw_reference = source / 'control/actions.jsonl'
+    trace, edits = normalize_reference(read_lines(raw_reference),
+                                       getattr(args, 'repair_known_key_typo', False))
     protocol = make_protocol(dataset['episodes'][0], trace)
+    previous = getattr(args, 'previous_attempt', None)
+    previous_check = check_previous_prefix(previous, source, trace, protocol, pilot) if previous else None
+    audit = {'schema': 'case15_reference_derivation.v1', 'source_path': str(raw_reference),
+             'source_sha256': pilot.sha256(raw_reference), 'record_count': len(trace),
+             'edits': edits, 'previous_prefix_check': previous_check,
+             'scope': 'Derived copy; original file and manifests remain unchanged. '
+                      'Only an explicitly allowed key is renamed. No pose value is filled or modified.'}
     # Reuse native config/data/seed preparation without modifying either helper.
     capture.prepare(SimpleNamespace(source_run=str(source), run_dir=str(target),
                                     episode='15', scene=SCENE), pilot)
     generated = pilot.read_json(target / 'manifest.json')
+    reference_path = target / 'reference_actions.jsonl'
+    reference_path.write_text(''.join(json.dumps(row, ensure_ascii=False) + '\n' for row in trace),
+                              encoding='utf-8')
+    audit['derived_path'] = str(reference_path)
+    audit['derived_sha256'] = pilot.sha256(reference_path)
+    audit_path = target / 'reference_audit.json'
+    pilot.write_json(audit_path, audit)
+    for path in (reference_path, audit_path):
+        generated['generated_hashes'][str(path)] = pilot.sha256(path)
+    if previous_check:
+        previous_path = Path(previous_check['path'])
+        generated['source_hashes'][str(previous_path)] = previous_check['sha256']
     native = pilot.load_config(target / 'control.py')
     for arm in ('control', 'repair'):
         cfg = copy.deepcopy(native)
@@ -118,6 +211,9 @@ def prepare(args):
         'arms': ['control', 'repair']}
     pilot.write_json(target / 'manifest.json', generated)
     print('PHYSICAL_RECOVERY_PREPARE=PASS', 'step=85', 'run_dir=', target)
+    print('REFERENCE_SCHEMA_CHECK=PASS', 'records=', len(trace), 'key_repairs=', len(edits))
+    if previous_check:
+        print('PREVIOUS_PREFIX_CHECK=PASS', 'actions=', protocol['prefix_action_count'])
     print('LOCKED_WAYPOINTS:', json.dumps(protocol['waypoints']))
 
 
@@ -364,8 +460,8 @@ def control_check(root, pilot, manifest):
     for field in ('status', 'seed_base', 'stage_synchronized', 'torch', 'cuda', 'transformers', 'device'):
         if a[field] != b[field] or (field == 'status' and b[field] != 'complete'):
             raise RuntimeError('NOT_COMPARABLE: control runtime differs: ' + field)
-    comparison = pilot.compare_traces(read_lines(source / 'control/actions.jsonl'),
-                                     read_lines(root / 'control/actions.jsonl'))
+    comparison = pilot.compare_traces(locked_reference(root, pilot),
+                                     validate_trace(read_lines(root / 'control/actions.jsonl'), 'control'))
     if not comparison['actions_and_poses_match'] or not pilot.metrics_match(a['metrics'], b['metrics']):
         raise RuntimeError('NOT_COMPARABLE: control must reproduce the entire native source')
     diagnostic = pilot.read_json(root / 'control/recovery_summary.json')
@@ -380,7 +476,7 @@ def run(args):
     manifest = pilot.verify_manifest(root)
     protocol = pilot.read_json(root / 'recovery_protocol.json')
     source = Path(manifest['physical_recovery_probe']['source_run'])
-    reference = read_lines(source / 'control/actions.jsonl')
+    reference = locked_reference(root, pilot)
     if args.arm == 'repair':
         control_check(root, pilot, manifest)
     import sys
@@ -467,6 +563,10 @@ def main():
     prep = commands.add_parser('prepare')
     prep.add_argument('--source-run', required=True)
     prep.add_argument('--run-dir', required=True)
+    prep.add_argument('--repair-known-key-typo', action='store_true',
+                      help='Allow only the reported spaced key at source record 10, in a derived copy')
+    prep.add_argument('--previous-attempt',
+                      help='CPU-check the corrected reference against an existing failed control prefix')
     prep.set_defaults(function=prepare)
     execute = commands.add_parser('run')
     execute.add_argument('--run-dir', required=True)
