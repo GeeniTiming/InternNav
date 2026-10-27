@@ -95,7 +95,7 @@ def instrument_loop(function):
         raise ValueError('Expected exactly one native episode loop')
     loop = loops[0]
     matches = []
-    expected = ast.parse('history_id = sorted(history_id)').body[0]
+    expected = ast.parse("history_id = np.unique(\n    np.linspace(0, step_id - 1, self.num_history, dtype=np.int32)\n).tolist()").body[0]
     for node in ast.walk(loop):
         for field, value in ast.iter_fields(node):
             if not isinstance(value, list):
