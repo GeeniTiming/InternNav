@@ -183,6 +183,31 @@ def verify_input_structure(checkpoint_root, turn_root, candidate_root):
     return cases, progress, turn_data, cand_data, turn_protocol, cand_protocol
 
 
+
+def verify_action_prefix(control, intervention, key, count, arm):
+    """Check exact native prefix action IDs and pose within 1e-5 metres.
+
+    Quaternion representations q and -q describe the same rotation.
+    """
+    if len(intervention) < count:
+        raise ValueError("NOT_COMPARABLE: short " + arm + " action prefix " + repr(key))
+    for i, (a, b) in enumerate(zip(control[:count], intervention[:count])):
+        if key_of(a) != key or key_of(b) != key or int(a["action"]) != int(b["action"]):
+            raise ValueError("NOT_COMPARABLE: " + arm + " action prefix changed at " + str(i))
+        if math.dist(a["position"], b["position"]) > 1e-5:
+            raise ValueError("NOT_COMPARABLE: " + arm + " prefix position changed at " + str(i))
+        qa, qb = a["orientation_wxyz"], b["orientation_wxyz"]
+        if min(math.dist(qa, qb), math.dist(qa, [-v for v in qb])) > 1e-5:
+            raise ValueError("NOT_COMPARABLE: " + arm + " prefix quaternion changed at " + str(i))
+
+
+def group_action_traces(path, expected):
+    groups = {}
+    for r in lines(path):
+        groups.setdefault(key_of(r), []).append(r)
+    assert_equal(set(groups), expected, "action trace episode set " + str(path))
+    return groups
+
 def make_dataset(checkpoint_root, turn_root, candidate_root, out_root):
     """Fail before any output is created on invalid or mismatched source data."""
     checkpoint_root = Path(checkpoint_root).resolve()
@@ -199,6 +224,11 @@ def make_dataset(checkpoint_root, turn_root, candidate_root, out_root):
         cp_traces.setdefault(key_of(r), []).append(r)
     actual_keys = {key_of_pair(c) for c in cases}
     assert_equal(set(cp_traces), actual_keys, "baseline action trace episode set")
+    treatment_traces = {
+        "10": group_action_traces(turn_root / "right90/turn_actions.jsonl", actual_keys),
+        "01": group_action_traces(candidate_root / "history_reset/turn_actions.jsonl", actual_keys),
+        "11": group_action_traces(candidate_root / "right90_reset/turn_actions.jsonl", actual_keys),
+    }
     checked = []
     contexts, labels, long_rows = [], [], []
     for case in cases:
@@ -222,6 +252,9 @@ def make_dataset(checkpoint_root, turn_root, candidate_root, out_root):
             raise ValueError("Invalid prefix action count: " + repr(key))
         if not all("action" in r for r in trace[:prefix_count]):
             raise ValueError("Missing action in native trace")
+        for arm_id, arm_traces in treatment_traces.items():
+            verify_action_prefix(trace, arm_traces[key], key, prefix_count,
+                                 ARMS[arm_id][0])
         instruction = progress["00"][key]["episode_instruction"]
         metrics = {}
         for arm_id, (arm, physical, memory) in ARMS.items():
@@ -366,6 +399,9 @@ def make_dataset(checkpoint_root, turn_root, candidate_root, out_root):
         candidate_root / "candidate_protocol.json",
         candidate_root / "history_reset/progress.json",
         candidate_root / "right90_reset/progress.json",
+        turn_root / "right90/turn_actions.jsonl",
+        candidate_root / "history_reset/turn_actions.jsonl",
+        candidate_root / "right90_reset/turn_actions.jsonl",
     ]
     evidence += [{"path": str(p), "sha256": digest(p)} for p in input_files]
     write_json(out_root / "input_provenance.json", {
