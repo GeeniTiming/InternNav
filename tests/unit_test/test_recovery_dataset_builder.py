@@ -128,6 +128,10 @@ class BuilderTests(unittest.TestCase):
         write_rows(self.cand / "history_reset/progress.json", progress["01"])
         write_rows(self.cand / "right90_reset/progress.json", progress["11"])
         write_rows(self.cp / "control/actions.jsonl", controls)
+        for folder, arm in ((self.turn, "right90"), (self.cand, "history_reset"),
+                            (self.cand, "right90_reset")):
+            # Exactly reproduce each episode's native prefix; extra steps simulate continuation.
+            write_rows(folder / arm / "turn_actions.jsonl", controls)
 
     def build(self):
         return BUILDER.make_dataset(self.cp, self.turn, self.cand, self.output)
@@ -180,6 +184,15 @@ class BuilderTests(unittest.TestCase):
         entries[1]["selected_history_ids"] = [14]
         write_json(path, entries)
         with self.assertRaisesRegex(ValueError, "history leaked"):
+            self.build()
+        self.assertFalse(self.output.exists())
+
+    def test_reject_changed_treatment_action_prefix(self):
+        path = self.turn / "right90/turn_actions.jsonl"
+        items = list(BUILDER.lines(path))
+        items[0]["position"] = [9., 6., 7.]
+        write_rows(path, items)
+        with self.assertRaisesRegex(ValueError, "prefix position changed"):
             self.build()
         self.assertFalse(self.output.exists())
 
