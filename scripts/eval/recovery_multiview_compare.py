@@ -57,9 +57,9 @@ def paired_boundary(run, arm, case):
     return folder
 
 
-def read_completed(report_path, schema):
+def read_completed(report_path, schema, status="READY_FOR_INTERPRETATION"):
     rep = dataset.load_json(report_path)
-    assert_true(rep.get("schema") == schema and rep.get("status") == "READY_FOR_INTERPRETATION",
+    assert_true(rep.get("schema") == schema and rep.get("status") == status,
                 str(report_path) + " incomplete or schema differs")
     return rep
 
@@ -74,7 +74,7 @@ def compare(source_cp: Path, original_turn: Path, previous: Path, angle45: Path 
     )
     expected = {key(c) for c in cases}
     turn_report = read_completed(original_turn / "turn_report.json",
-                                 "orientation_turn_report.v1")
+                                 "orientation_turn_report.v1", "READY_FOR_REVIEW")
     cand_report = read_completed(previous / "candidate_report.json",
                                  "recovery_candidates_report.v1")
     base_trace = dataset.group_action_traces(cp / "control/actions.jsonl", expected)
