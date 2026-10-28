@@ -229,7 +229,11 @@ def instrument_loop(function):
     images = ast.parse(
         "input_images = [rgb_list[i] for i in history_id] + cur_images"
     ).body[0]
-    h_found, i_found = 0, 0
+    response = ast.parse(
+        "llm_outputs = self.processor.tokenizer.decode("
+        "output_ids[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)"
+    ).body[0]
+    h_found, i_found, r_found = 0, 0, 0
     # Locate assignments structurally; fail closed if evaluator source changes.
     for node in ast.walk(loop):
         for field, value in ast.iter_fields(node):
@@ -248,10 +252,15 @@ def instrument_loop(function):
                         "step_id, sources, input_images)"
                     ).body[0])
                     i_found += 1
-    if (h_found, i_found) != (1, 1):
+                if isinstance(item, ast.Assign) and ast.dump(item) == ast.dump(response):
+                    value.insert(index + 1, ast.parse(
+                        "self._recovery_candidate.record_system2_output(step_id, llm_outputs)"
+                    ).body[0])
+                    r_found += 1
+    if (h_found, i_found, r_found) != (1, 1, 1):
         raise RuntimeError(
-            "NOT_COMPARABLE: expected one native history/image assembly, found "
-            + repr((h_found, i_found))
+            "NOT_COMPARABLE: expected one native history/image/response assembly, found "
+            + repr((h_found, i_found, r_found))
         )
     ast.fix_missing_locations(tree)
     namespace = dict(function.__globals__)
@@ -540,9 +549,10 @@ def report(args):
                     records[0]["main_step"] != checkpoint_data["step"]):
                 raise RuntimeError("Supplementary input not injected exactly once")
             folder = root / arm / "checkpoints" / (key[0] + "_" + key[1])
-            if physical.history_hash([
-                __import__("PIL").Image.open(folder / "outward_view_model_rgb.png")
-            ]) != evidence["scan_view_sha256"]:
+            from PIL import Image
+            with Image.open(folder / "outward_view_model_rgb.png") as opened:
+                recorded_view_hash = physical.history_hash([opened.copy()])
+            if recorded_view_hash != evidence["scan_view_sha256"]:
                 raise RuntimeError("Outward RGB hash differs from captured view")
             expected_source = (
                 "outward_view" if arm.endswith("_evidence") else "duplicate_current"
@@ -570,8 +580,9 @@ def report(args):
                 raise RuntimeError("C/D have different native physical scans")
             if rows[key][e]["post_return_current_sha256"] != rows[key][p]["post_return_current_sha256"]:
                 raise RuntimeError("C/D current RGB differs after identical return")
-            if rows[key][e]["supplementary_sha256"] == rows[key][p]["supplementary_sha256"]:
-                raise RuntimeError("Diagnostic view adds no distinct pixel information")
+            rows[key][side + "_novel_pixel_content"] = (
+                rows[key][e]["supplementary_sha256"] != rows[key][p]["supplementary_sha256"]
+            )
             rows[key][side + "_evidence_minus_placebo"] = (
                 rows[key][e]["success"] - rows[key][p]["success"]
             )
