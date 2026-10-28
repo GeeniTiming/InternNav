@@ -95,6 +95,36 @@ def validate_prior(checkpoint_run, factorial_run):
     return old, cases, report
 
 
+def verify_inherited_runtime_contract(protocol):
+    """CPU preflight for fields consumed by the inherited TurnProbe.
+
+    The two aliases must be explicit: old TurnProbe.__init__ reads
+    native_main_step_limit, and future compatible probes may read the
+    original_main_loop_limit spelling. Catch drift BEFORE a GPU is loaded.
+    """
+    original = protocol.get("original_main_loop_limit")
+    native = protocol.get("native_main_step_limit")
+    charged = protocol.get("charged_main_step_limit")
+    charged_compat = protocol.get("charged_native_main_step_limit")
+    actions = protocol.get("forced_native_actions")
+    if (not isinstance(original, int) or isinstance(original, bool)
+            or original <= SCAN_ACTIONS
+            or native != original
+            or actions != SCAN_ACTIONS
+            or charged != original - SCAN_ACTIONS
+            or charged_compat != charged):
+        raise ValueError(
+            "Mechanism protocol / inherited TurnProbe limit contract mismatch: "
+            "native_main_step_limit and charged_main_step_limit required"
+        )
+    if not isinstance(protocol.get("cases"), list) or not protocol["cases"]:
+        raise ValueError("Mechanism protocol has no checkpoint cases")
+    if any(int(row["checkpoint"]["step"]) + SCAN_ACTIONS >= original
+           for row in protocol["cases"]):
+        raise ValueError("Insufficient native budget at a locked mechanism checkpoint")
+    return True
+
+
 def prepare(args):
     source = Path(args.source_run).resolve()
     factorial = Path(args.factorial_run).resolve()
@@ -118,7 +148,10 @@ def prepare(args):
         "angles": ARM_ANGLES,
         "forced_native_actions": SCAN_ACTIONS,
         "original_main_loop_limit": limit,
+        "native_main_step_limit": limit,  # required by inherited TurnProbe.__init__
         "charged_main_loop_limit": limit - SCAN_ACTIONS,
+        "charged_main_step_limit": limit - SCAN_ACTIONS,
+        "charged_native_main_step_limit": limit - SCAN_ACTIONS,
         "injection": {
             "location": "first ordinary System-2 prompt immediately after scan",
             "image_position": "extra image immediately before current image",
@@ -131,6 +164,7 @@ def prepare(args):
         },
         "limitations": SCOPE,
     }
+    verify_inherited_runtime_contract(protocol)
     revision = subprocess.run(
         ["git", "-C", str(pilot.ROOT), "rev-parse", "HEAD"],
         capture_output=True, text=True, check=False,
@@ -201,6 +235,7 @@ def read_run(root):
             or protocol["forced_native_actions"] != SCAN_ACTIONS
             or protocol["injection"]["prompt"] != EXTRA_PROMPT):
         raise ValueError("Locked evidence-isolation protocol changed")
+    verify_inherited_runtime_contract(protocol)
     return source, factorial, protocol
 
 
