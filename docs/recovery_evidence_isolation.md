@@ -57,6 +57,24 @@ Do not call this difference a pure physical effect.
   after-return PNG, image-pixel hashes and final SR/NE.
 - Rejects incomplete/modified earlier reports and create-only outputs.
 
+## Recovery after the initial inherited TurnProbe KeyError
+
+The original pilot revision did not pass the inherited
+`native_main_step_limit` field into `MechanismProbe`. The model could
+initialize, but the probe constructor failed before the first scan.
+
+The fixed script explicitly declares/checks compatible native/charged
+main-step budget keys **during CPU prepare/read_run**, before model
+initialization. CPU unit tests also instantiate the actual inherited
+probe on a fake evaluator to prevent regression.
+
+The old `data/recovery_evidence_isolation_02_01` is a historical
+**failed, create-only run** whose manifest hashes the old script.
+Do not delete it, patch its locked manifest, or rerun that same arm.
+
+Use the fresh `data/recovery_evidence_isolation_02_02` in ALL commands
+below. Keep the original checkpoint and factorial `02_01` sources.
+
 ## Running in the existing InternNav experiment workspace
 
 \`\`\`bash
@@ -82,7 +100,7 @@ PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
 python scripts/eval/recovery_evidence_isolation.py prepare \
   --source-run data/recovery_new_checkpoint_02_01 \
   --factorial-run data/recovery_new_factorial_02_01 \
-  --run-dir data/recovery_evidence_isolation_02_01
+  --run-dir data/recovery_evidence_isolation_02_02
 \`\`\`
 
 Expected: \`EVIDENCE_ISOLATION_PREPARE=PASS 2 contexts; new arms= 4\`.
@@ -94,7 +112,7 @@ verified before interpreting any visual benefit:
 set -o pipefail
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES=0 \
 python -u scripts/eval/recovery_evidence_isolation.py run \
-  --run-dir data/recovery_evidence_isolation_02_01 \
+  --run-dir data/recovery_evidence_isolation_02_02 \
   --arm lookback_right45_placebo \
   2>&1 | tee recovery_evidence_right45_placebo.log
 \`\`\`
@@ -108,7 +126,7 @@ Then run **the matched evidence arm**:
 \`\`\`bash
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES=0 \
 python -u scripts/eval/recovery_evidence_isolation.py run \
-  --run-dir data/recovery_evidence_isolation_02_01 \
+  --run-dir data/recovery_evidence_isolation_02_02 \
   --arm lookback_right45_evidence \
   2>&1 | tee recovery_evidence_right45_evidence.log
 \`\`\`
@@ -124,12 +142,12 @@ When all four arms complete, perform the CPU-only audit:
 \`\`\`bash
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
 python scripts/eval/recovery_evidence_isolation.py report \
-  --run-dir data/recovery_evidence_isolation_02_01 \
+  --run-dir data/recovery_evidence_isolation_02_02 \
   > recovery_evidence_isolation_report.log
 \`\`\`
 
 The output is
-\`data/recovery_evidence_isolation_02_01/mechanism_report.json\`.
+\`data/recovery_evidence_isolation_02_02/mechanism_report.json\`.
 Send that JSON to analyze C−D and the first-System-2 response.
 
 **If an arm fails, preserve the run directory and full log**.
