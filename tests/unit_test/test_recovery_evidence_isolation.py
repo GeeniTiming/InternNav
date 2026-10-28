@@ -58,7 +58,7 @@ def fake_native_loop(self):
     action_seq, pixel_goal, local_actions, action = [], None, [], 1
     step_id = 1
     output_ids = [["token"]]
-    sources = [{"value": "An instruction."}]
+    sources = [{"value": "An instruction. These are your historical observations: <image>."}]
     cur_images = ["current"]
     inputs = type("InputStub", (), {"input_ids": type("InputIdStub", (), {"shape": [1, 0]})()})()
     while (not done) and (step_id <= self.max_steps_per_episode):
@@ -94,7 +94,7 @@ class MechanismTests(unittest.TestCase):
             ["boundary", "history", "image", "response"],
         )
         self.assertEqual(evaluator.last_image_count, 3)
-        self.assertEqual(evaluator.last_prompt.count("<image>"), 1)
+        self.assertEqual(evaluator.last_prompt.count("<image>"), 2)
 
     def test_native_shape_drift_rejected(self):
         def altered(self):
