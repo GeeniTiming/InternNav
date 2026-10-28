@@ -387,6 +387,10 @@ class MechanismProbe(prior.CandidateProbe):
             raise RuntimeError("Supplementary view and placebo dimensions differ")
         sources[0]["value"] += EXTRA_PROMPT
         input_images.insert(-1, image)
+        # The native evaluator appends exactly one further <image> for the
+        # current view immediately after this hook. Fail on token/image drift.
+        if sources[0]["value"].count("<image>") + 1 != len(input_images):
+            raise RuntimeError("NOT_COMPARABLE: supplementary token/image count mismatch")
         self.inject_count += 1
         self.inject_pending = False
         self.inject_events.append({
@@ -559,6 +563,11 @@ def report(args):
             )
             if records[0]["source"] != expected_source:
                 raise RuntimeError("Wrong visual input source in mechanism arm")
+            expected_pixel_hash = (evidence["scan_view_sha256"] if
+                                   arm.endswith("_evidence") else
+                                   evidence["post_return_current_sha256"])
+            if records[0]["supplementary_pixel_sha256"] != expected_pixel_hash:
+                raise RuntimeError("Supplementary image provenance/pixels changed")
             scan_traces[(arm, key)] = external
             rows[key][arm] = {
                 "success": int(progress[key]["success"]),
