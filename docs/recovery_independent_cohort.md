@@ -32,7 +32,63 @@ python -m unittest discover -s tests/unit_test \
   -p 'test_recovery_independent_cohort.py' -v
 \`\`\`
 
-## 2. Create an expanded unmodified native CONTROL pilot
+## 2. Fix for "Need 2 unseen-scene groups, found 1"
+
+The legacy `cache_pilot.py prepare --episodes 40` uses the first **40 source
+episodes**, which are often clustered by scene. If the old 40-control pilot
+has already completed, **do not delete or rerun it**.
+
+**Option A — immediate one-scene pipeline smoke test:** reuse that pilot,
+choose a NEW create-only cohort directory and `--cases 1`:
+
+```bash
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+python scripts/eval/recovery_independent_cohort.py \
+  --source-run data/recovery_native_pilot_40_01 \
+  --exclude-checkpoint-run data/orientation_checkpoint_01 \
+  --cases 1 \
+  --run-dir data/recovery_new_cohort_01_01
+```
+
+This is useful only as a pipeline test, not as evidence of generalization.
+Use matching `01_01` paths at downstream stages rather than the 2-scene
+paths below.
+
+**Option B — preferable next 2-scene pilot:** run the new *scene-diverse*
+CPU preparation first. It selects the **first episode of each distinct
+uninspected scene from the full source annotations** without conditioning on
+success or future trajectories. It leaves the original `cache_pilot.py`
+untouched to preserve previously locked hashes:
+
+```bash
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+python -m unittest discover -s tests/unit_test \
+  -p 'test_recovery_scene_diverse_pilot.py' -v
+
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+python scripts/eval/recovery_scene_diverse_pilot.py \
+  --episodes 2 \
+  --exclude-checkpoint-run data/orientation_checkpoint_01 \
+  --run-dir data/recovery_native_diverse_02_01
+
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES=0 \
+python -u scripts/eval/cache_pilot.py run \
+  --run-dir data/recovery_native_diverse_02_01 \
+  --arm control \
+  2>&1 | tee recovery_native_diverse_02_01.log
+
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+python scripts/eval/recovery_independent_cohort.py \
+  --source-run data/recovery_native_diverse_02_01 \
+  --exclude-checkpoint-run data/orientation_checkpoint_01 \
+  --cases 2 \
+  --run-dir data/recovery_new_cohort_02_02
+```
+
+Then use this `02_02` cohort for checkpoint capture and a new matching
+directory for factorial arms. All outputs are create-only.
+
+## 2b. Alternative: create an expanded unmodified native CONTROL pilot
 
 If you **already have** a completed, non-profiled native pilot with
 enough additional scenes, use it at step 3; it must have \`manifest.json\`,
