@@ -20,7 +20,7 @@ pilot, physical, capture = cohort.pilot, cohort.physical, cohort.capture
 
 SCOPE = (
     'Native replay and RGB-history feature capture on new scene-disjoint route groups. '
-    'Completed baseline lengths determine offline checkpoint timing. No orientation '
+    'Checkpoint timing uses only observed run-time state, not future baseline length. No orientation '
     'intervention, online detector, recovery effect, training, language-completion, '
     'held-out efficacy, or isolated memory-causality conclusion.'
 )
@@ -49,6 +49,8 @@ def verify_cohort(root):
         traces[capture.episode_key(row)].append(row)
     expected = cohort.select_plan(dataset, progress, traces, plan['excluded_scenes'], plan['maximum_cases'])
     expected['source_run'] = str(source)
+    expected['exclude_checkpoint_run'] = plan['exclude_checkpoint_run']
+    expected['source_split'] = plan['source_split']
     if plan != expected:
         raise ValueError('Cohort selection/rules differ from the locked source')
     return plan, lock, source, native, dataset, progress, traces
