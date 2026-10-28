@@ -3,6 +3,9 @@ import math
 from pathlib import Path
 import sys
 import unittest
+from types import SimpleNamespace
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import numpy as np
 
@@ -84,6 +87,43 @@ class MechanismTests(unittest.TestCase):
             self.assertEqual(mech.arm_pair(arm) + (
                 "_evidence" if arm.endswith("_evidence") else "_placebo"
             ), arm[len("lookback_"):])
+
+    def test_inherited_turnprobe_protocol_contract(self):
+        protocol = {
+            "cases": [{"key": ["scene", "1"], "checkpoint": {"step": 40}}],
+            "original_main_loop_limit": 500,
+            "native_main_step_limit": 500,
+            "charged_main_loop_limit": 494,
+            "charged_main_step_limit": 494,
+            "charged_native_main_step_limit": 494,
+            "forced_native_actions": 6,
+        }
+        self.assertTrue(mech.verify_inherited_runtime_contract(protocol))
+        for key in ("native_main_step_limit", "charged_main_step_limit"):
+            broken = dict(protocol)
+            broken.pop(key)
+            with self.assertRaisesRegex(ValueError, "TurnProbe limit contract"):
+                mech.verify_inherited_runtime_contract(broken)
+        broken = dict(protocol, native_main_step_limit=499)
+        with self.assertRaisesRegex(ValueError, "TurnProbe limit contract"):
+            mech.verify_inherited_runtime_contract(broken)
+
+        # Regression for the exact user crash: construct the REAL inherited
+        # MechanismProbe -> CandidateProbe -> TurnProbe on a fake CPU evaluator.
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            arm = "lookback_right45_placebo"
+            (root / arm).mkdir()
+            evaluator = SimpleNamespace(
+                max_steps_per_episode=500,
+                model=object(),
+                env=SimpleNamespace(step=lambda action: None),
+            )
+            with patch.object(mech.common, "parameter_versions", return_value="TEST"):
+                probe = mech.MechanismProbe(evaluator, root, arm, protocol, {})
+            self.assertEqual(probe.original_limit, 500)
+            self.assertEqual(probe.arm, arm)
+            probe.action_stream.close()
 
     def test_ast_hooks_order_once_only(self):
         wrapped = mech.instrument_loop(fake_native_loop)
