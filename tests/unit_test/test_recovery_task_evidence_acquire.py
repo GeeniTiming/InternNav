@@ -193,6 +193,8 @@ class AcquisitionTests(unittest.TestCase):
             "episode_key": native["episode_key"], "main_step": native["main_step"],
             "instruction": native["instruction"],
             "current_rgb": "images/current.png", "historical_rgb": [],
+            "native_action_prefix_count": native["native_action_prefix_count"],
+            "past_action_codes": [],
             "annotation": {
                 "status": "complete", "annotator_id": "reviewer1",
                 "current_subinstruction_span": "Go to the bed",
