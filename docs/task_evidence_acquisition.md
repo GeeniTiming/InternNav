@@ -139,7 +139,8 @@ states, report the shortfall rather than replacing them by known
 successes or failures.
 
 Each `annotations.jsonl` record has the original task, selected
-images, and an `annotation` dictionary initially all marked
+images, the exact preceding **action-code** history (no poses or future
+actions), and an `annotation` dictionary initially all marked
 `unreviewed/unknown`. These are **honest placeholders**.
 
 To make manual review easier, render read-only comparison sheets
