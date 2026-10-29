@@ -126,6 +126,21 @@ def prepare(args):
           "train scenes; no model loaded; output:", root)
 
 
+def locked_episode_keys(manifest):
+    """Identity of the selected episodes, independent of Habitat path spelling.
+
+    Habitat may expose an absolute/rewritten scene path even when the R2R
+    annotation and manifest use the original relative scene_id. The existing
+    project's episode_key() is already the common canonical representation.
+    Do not use episode_id alone; scenes may reuse episode numbers.
+    """
+    episodes = manifest["episodes"]
+    keys = [capture.episode_key(row) for row in episodes]
+    if len(keys) != len(set(keys)):
+        raise ValueError("Selected manifest has duplicate canonical scene/episode keys")
+    return frozenset(keys)
+
+
 def pixel_digest(image):
     """Hash actual PIL pixel bytes, independent of PNG compression."""
     key = image.mode.encode("ascii") + b"\0" + str(image.size).encode("ascii")
@@ -212,6 +227,7 @@ class DecisionRecorder:
 
     def __init__(self, evaluator, run_dir, manifest):
         self.evaluator, self.root, self.manifest = evaluator, Path(run_dir), manifest
+        self.allowed_episode_keys = locked_episode_keys(manifest)
         self.capture = self.root / "capture"
         self.capture.mkdir(exist_ok=False)
         self.images_dir = self.capture / "images"
@@ -256,10 +272,11 @@ class DecisionRecorder:
             raise RuntimeError("System-2 call began before prior output was recorded")
         ep = self.evaluator.env.get_current_episode()
         key = capture.episode_key({"scene_id": ep.scene_id, "episode_id": ep.episode_id})
-        if [ep.scene_id, str(ep.episode_id)] not in [
-            [e["scene_id"], e["episode_id"]] for e in self.manifest["episodes"]
-        ]:
-            raise RuntimeError("Unexpected native episode in decision recorder " + str(key))
+        if key not in self.allowed_episode_keys:
+            raise RuntimeError(
+                "Unexpected canonical native episode in decision recorder: "
+                + repr(key) + "; allowed=" + repr(sorted(self.allowed_episode_keys))
+            )
         call_type = ("lookdown_followup" if action == 5 else "ordinary")
         ids = [] if call_type == "lookdown_followup" else [int(v) for v in history_ids]
         if call_type == "ordinary":
@@ -344,6 +361,7 @@ def run(args):
     manifest = pilot.verify_manifest(root)
     if manifest.get("task_evidence_capture", {}).get("schema") != SCHEMA:
         raise ValueError("Not a task-evidence acquisition preparation")
+    locked_episode_keys(manifest)
     cfg = pilot.load_config(root / "control.py")
     require_train(cfg)
     if (root / "capture").exists() or (root / "control").exists():
