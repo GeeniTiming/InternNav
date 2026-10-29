@@ -142,6 +142,19 @@ Each \`annotations.jsonl\` record has the original task, selected
 images, and an \`annotation\` dictionary initially all marked
 \`unreviewed/unknown\`. These are **honest placeholders**.
 
+To make manual review easier, render read-only comparison sheets
+(current frame plus the four most recent historical inputs):
+
+\`\`\`bash
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \\
+python scripts/eval/recovery_task_evidence_annotation.py render \\
+  --annotation-dir data/task_evidence_annotations_a_50_01 \\
+  --history-panels 4
+\`\`\`
+
+The PNGs are saved to \`previews/\` and are deliberately NOT classifier
+features or evidence labels. Render is create-only.
+
 For each decision, read the image files under the absolute
 \`source_capture_dir\`. The ordered \`historical_rgb\` list is exactly
 the frames in the native System-2 prompt; \`current_rgb\` is last.
