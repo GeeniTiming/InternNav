@@ -70,7 +70,18 @@ def choose_rows(decisions, count, seed, gap=4):
     return chosen
 
 
-def make_template(row, source):
+def preceding_action_codes(row, action_rows):
+    """Only actions from the SAME episode strictly before S2 generation."""
+    n = int(row["native_action_prefix_count"])
+    if not 0 <= n <= len(action_rows):
+        raise ValueError("Decision action prefix exceeds the native trace")
+    return [
+        int(a["action"]) for a in action_rows[:n]
+        if a["episode_key"] == row["episode_key"]
+    ]
+
+
+def make_template(row, source, action_rows):
     # Validate provenance; existing images can be reused by many decisions.
     acquire.validate_online_row(row)
     refs = [ref["path"] for ref in row["images"]]
@@ -86,6 +97,8 @@ def make_template(row, source):
         "instruction": row["instruction"],
         "current_rgb": refs[-1],
         "historical_rgb": refs[:-1],
+        "native_action_prefix_count": row["native_action_prefix_count"],
+        "past_action_codes": preceding_action_codes(row, action_rows),
         "source_capture_dir": str(source / "capture"),
         "annotation": {
             "status": "unreviewed",
@@ -113,7 +126,8 @@ def sample(args):
     acquire.report(argparse.Namespace(run_dir=str(source)))
     records = acquire.read_records(source / "capture/online_decisions.jsonl")
     chosen = choose_rows(records, args.count, args.seed, args.min_gap)
-    templates = [make_template(row, source) for row in chosen]
+    actions = acquire.read_records(source / "capture/online_action_codes.jsonl")
+    templates = [make_template(row, source, actions) for row in chosen]
     output.mkdir(parents=True, exist_ok=False)
     with (output / "annotations.jsonl").open("x", encoding="utf-8") as f:
         for row in templates:
@@ -141,6 +155,8 @@ def check_row(row, native):
     originals = [ref["path"] for ref in native["images"]]
     if row["current_rgb"] != originals[-1] or row["historical_rgb"] != originals[:-1]:
         raise ValueError("Altered image inputs")
+    if int(row.get("native_action_prefix_count", -1)) != native["native_action_prefix_count"]:
+        raise ValueError("Altered native action prefix count")
     data = row["annotation"]
     if data["status"] not in STATUS:
         raise ValueError("Invalid review status")
@@ -211,6 +227,7 @@ def validate(args):
         for r in acquire.read_records(source / "capture/online_decisions.jsonl")
     }
     rows = acquire.read_records(folder / "annotations.jsonl")
+    actions = acquire.read_records(source / "capture/online_action_codes.jsonl")
     if (len(rows) != sampling["count"]
             or [int(r["call_id"]) for r in rows] != sampling["source_rows"]):
         raise ValueError("Annotation sampling cohort/order changed")
@@ -218,7 +235,10 @@ def validate(args):
     for row in rows:
         if int(row["call_id"]) not in originals:
             raise ValueError("Annotation references unknown decision")
-        status = check_row(row, originals[int(row["call_id"])])
+        native = originals[int(row["call_id"])]
+        if row["past_action_codes"] != preceding_action_codes(native, actions):
+            raise ValueError("Annotation contains altered or future action codes")
+        status = check_row(row, native)
         counts[status] += 1
     result = {
         "schema": SCHEMA, "status": "ANNOTATION_AUDIT_PASS",
