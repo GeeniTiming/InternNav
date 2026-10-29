@@ -143,6 +143,16 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(e._evidence_recorder.events, ["input", "output"])
         self.assertEqual(e._evidence_recorder.history_ids, [[0]])
 
+    def test_native_first_step_action_none(self):
+        # Actual DualVLN begins each episode with action=None; it must not
+        # coerce this to int before the first native System-2 generation.
+        wrapped = acq.instrument_loop(native_fake)
+        e = FakeEval()
+        e.test_action = None
+        self.assertEqual(wrapped(e), "→→")
+        self.assertEqual(e._evidence_recorder.events, ["input", "output"])
+        self.assertEqual(e._evidence_recorder.history_ids, [[0]])
+
     def test_ast_hook_lookdown_does_not_reference_foreign_globals(self):
         wrapped = acq.instrument_loop(native_fake)
         e = FakeEval()
