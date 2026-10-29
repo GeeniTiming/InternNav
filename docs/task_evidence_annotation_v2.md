@@ -139,11 +139,14 @@ python scripts/eval/recovery_task_evidence_annotation.py render \
   --history-panels 8
 ```
 
-The next acquisition step is a fresh, independently selected set
-of 20 scene-disjoint TRAIN episodes from the frozen native agent,
-followed by v2 evidence annotations. Those episodes are data for
-protocol development, **not independent efficacy results**.
-Reserve other scenes before testing any future learned selector.
+After checking the v2 schema, the next data acquisition may select
+20 different TRAIN scenes using the existing create-only native script.
+**Important:** the present first-in-annotation-order selector will
+include the two scenes already inspected in the 2-scene smoke test;
+thus it means **20 total distinct train scenes, not 20 new untouched
+scenes**. Treat all 20 as development/acquisition material, not held-out
+validation or evidence of generalization. Reserve a disjoint scene/route
+group before evaluating any future learned recovery selector.
 
 The v1 six-sample archive and `task_evidence_train_smoke_02_03`
 remain unchanged; no GPU re-run is required for v2.
