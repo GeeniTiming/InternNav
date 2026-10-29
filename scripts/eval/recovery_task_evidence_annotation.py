@@ -273,8 +273,8 @@ def render(args):
     from PIL import Image, ImageDraw
     root = Path(args.annotation_dir).resolve()
     rows = acquire.read_records(root / "annotations.jsonl")
-    out = root / "previews"
-    out.mkdir(exist_ok=False)
+    out = Path(args.out_dir).resolve() if args.out_dir else root / "previews"
+    out.mkdir(parents=True, exist_ok=False)
     if not 1 <= int(args.history_panels) <= 12:
         raise ValueError("history-panels must be 1..12")
     width, height, margin, heading = 256, 256, 12, 35
@@ -373,6 +373,7 @@ def main(argv=None):
     preview = subs.add_parser("render")
     preview.add_argument("--annotation-dir", required=True)
     preview.add_argument("--history-panels", type=int, default=4)
+    preview.add_argument("--out-dir", help="Create-only destination; permits a second full-history render")
     preview.set_defaults(function=render)
     args = p.parse_args(argv)
     args.function(args)
