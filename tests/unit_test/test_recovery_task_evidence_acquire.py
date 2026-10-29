@@ -31,10 +31,10 @@ FakeProcessor.tokenizer = FakeTokenizer()
 
 
 def native_fake(self):
-    done, step_id, action = False, 1, 3
+    done, step_id, action = False, 1, getattr(self, "test_action", 3)
     input_images = [Image.new("RGB", (10, 10), (1, 2, 3))]
-    history_id = []
-    rgb_list = ["current"]
+    history_id = [0]
+    rgb_list = ["previous", "current"]
     episode_instruction = "Walk to the bed."
     sources = [{"value": "Walk to the bed. <image>"}]
     text = "Walk to the bed. <image>"
@@ -51,9 +51,11 @@ def native_fake(self):
 class FakeHook:
     def __init__(self):
         self.events = []
+        self.history_ids = []
 
     def before(self, *args):
         self.events.append("input")
+        self.history_ids.append(args[4])
     def after(self, *args):
         self.events.append("output")
 
@@ -139,6 +141,15 @@ class AcquisitionTests(unittest.TestCase):
         e = FakeEval()
         self.assertEqual(wrapped(e), "→→")
         self.assertEqual(e._evidence_recorder.events, ["input", "output"])
+        self.assertEqual(e._evidence_recorder.history_ids, [[0]])
+
+    def test_ast_hook_lookdown_does_not_reference_foreign_globals(self):
+        wrapped = acq.instrument_loop(native_fake)
+        e = FakeEval()
+        e.test_action = 5
+        self.assertEqual(wrapped(e), "→→")
+        self.assertEqual(e._evidence_recorder.events, ["input", "output"])
+        self.assertEqual(e._evidence_recorder.history_ids, [[]])
 
     def test_ast_source_drift_rejected(self):
         def drift(self):
