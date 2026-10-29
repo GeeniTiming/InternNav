@@ -167,6 +167,9 @@ def instrument_loop(function):
     if len(loops) != 1:
         raise ValueError("Expected exactly one DualVLN main episode loop")
     loop = loops[0]
+    # Native action_code.LOOKDOWN is integer 5. Use its value inside the
+    # injected callback rather than a foreign module-global name: test/native
+    # functions each execute in their own verified global symbol table.
     expected_inputs = ast.parse(
         'inputs = self.processor(text=[text], images=input_images, '
         'return_tensors="pt").to(self.model.device)'
@@ -185,7 +188,7 @@ def instrument_loop(function):
                     block.insert(index + 1, ast.parse(
                         "self._evidence_recorder.before("
                         "step_id, action, episode_instruction, input_images, "
-                        "history_id if action != action_code.LOOKDOWN else [], "
+                        "history_id if int(action) != 5 else [], "
                         "len(rgb_list), sources[0]['value'], text)"
                     ).body[0])
                     n_in += 1
