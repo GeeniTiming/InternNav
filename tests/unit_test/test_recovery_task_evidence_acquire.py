@@ -136,6 +136,72 @@ class AcquisitionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "only 2"):
             acq.select_train_scenes(dataset, 3)
 
+    def test_locked_episode_keys_normalize_scene_path(self):
+        # R2R annotations may store a relative scene file; Habitat resolves
+        # it to another root. Episode ID alone is not enough as scenes reuse IDs.
+        manifest = {"episodes": [
+            {"scene_id": "data/scene_data/mp3d_ce/5LpN3gDmAk7/5LpN3gDmAk7.glb",
+             "episode_id": "4"},
+            {"scene_id": "data/scene_data/mp3d_ce/second/second.glb",
+             "episode_id": "4"},
+        ]}
+        keys = acq.locked_episode_keys(manifest)
+        self.assertIn(("5LpN3gDmAk7", "4"), keys)
+        self.assertIn(("second", "4"), keys)
+        native = acq.capture.episode_key({
+            "scene_id": "/mnt/datasets/mp3d_ce/5LpN3gDmAk7/5LpN3gDmAk7.glb",
+            "episode_id": 4,
+        })
+        self.assertIn(native, keys)
+
+        colliding = {"episodes": [
+            {"scene_id": "/data1/5LpN3gDmAk7.glb", "episode_id": 4},
+            {"scene_id": "/data2/5LpN3gDmAk7.glb", "episode_id": "4"},
+        ]}
+        with self.assertRaisesRegex(ValueError, "duplicate canonical"):
+            acq.locked_episode_keys(colliding)
+
+    def test_recorded_episode_matches_normalized_manifest_not_raw_path(self):
+        with TemporaryDirectory() as t:
+            root = Path(t)
+            ep = FakeRawEpisode()
+            evaluator = RecorderEval()
+            manifest = {"episodes": [{
+                "scene_id": "arbitrary_annotation_root/a/a.glb",
+                "episode_id": int(ep.episode_id),
+            }]}
+            rec = acq.DecisionRecorder(evaluator, root, manifest)
+            image = Image.new("RGB", (10, 10), (1, 2, 3))
+            rec.before(
+                step=0, action=None,
+                instruction=ep.instruction.instruction_text,
+                images=[image], history_ids=[], rgb_count=1,
+                prompt="Walk to the bed. <image>",
+                rendered_prompt="TOKEN: Walk to the bed. <image>",
+            )
+            rec.after(0, "→")
+            rec.close()
+            rows = acq.read_records(root / "capture/online_decisions.jsonl")
+            self.assertEqual(rows[0]["episode_key"], ["a", "28"])
+            self.assertEqual(rows[0]["main_step"], 0)
+
+    def test_recorded_episode_mismatch_still_fails_closed(self):
+        with TemporaryDirectory() as t:
+            root = Path(t)
+            evaluator = RecorderEval()
+            rec = acq.DecisionRecorder(evaluator, root, {
+                "episodes": [{"scene_id": "x/x.glb", "episode_id": "28"}]
+            })
+            with self.assertRaisesRegex(RuntimeError, "Unexpected canonical native episode"):
+                rec.before(
+                    step=0, action=None,
+                    instruction=FakeRawEpisode.instruction.instruction_text,
+                    images=[Image.new("RGB", (10, 10))],
+                    history_ids=[], rgb_count=1,
+                    prompt="x", rendered_prompt="x",
+                )
+            rec.close("mismatched episode expected")
+
     def test_process_local_ast_hooks_no_policy_mutation(self):
         wrapped = acq.instrument_loop(native_fake)
         e = FakeEval()
