@@ -99,6 +99,10 @@ def make_template(row, source, action_rows):
         "historical_rgb": refs[:-1],
         "native_action_prefix_count": row["native_action_prefix_count"],
         "past_action_codes": preceding_action_codes(row, action_rows),
+        "episode_action_prefix_count": len(preceding_action_codes(row, action_rows)),
+        "duplicate_current_history_slots": [
+            i for i, path in enumerate(refs[:-1]) if path == refs[-1]
+        ],
         "source_capture_dir": str(source / "capture"),
         "annotation": {
             "status": "unreviewed",
@@ -157,6 +161,16 @@ def check_row(row, native):
         raise ValueError("Altered image inputs")
     if int(row.get("native_action_prefix_count", -1)) != native["native_action_prefix_count"]:
         raise ValueError("Altered native action prefix count")
+    if "episode_action_prefix_count" in row and (
+            type(row["episode_action_prefix_count"]) is not int
+            or row["episode_action_prefix_count"] != len(row["past_action_codes"])):
+        raise ValueError("Episode-relative action count differs from prefix action codes")
+    expected_duplicates = [
+        i for i, path in enumerate(originals[:-1]) if path == originals[-1]
+    ]
+    if ("duplicate_current_history_slots" in row
+            and row["duplicate_current_history_slots"] != expected_duplicates):
+        raise ValueError("Altered current/history duplicate-image metadata")
     data = row["annotation"]
     if data["status"] not in STATUS:
         raise ValueError("Invalid review status")
@@ -192,11 +206,14 @@ def check_row(row, native):
     ):
         raise ValueError("Landmark labels must be nonempty strings")
     if data["status"] == "complete":
-        if (not data["annotator_id"].strip()
-                or not data["reason"].strip()
-                or not data["current_subinstruction_span"].strip()):
-            raise ValueError("Completed annotation requires author, reason and subinstruction")
-        if data["current_subinstruction_span"] not in row["instruction"]:
+        if not data["annotator_id"].strip() or not data["reason"].strip():
+            raise ValueError("Completed annotation requires author and evidence/uncertainty reason")
+        # Honest unresolvable progress is a valid *completed* review, not
+        # an excuse to invent a current subinstruction.
+        span = data["current_subinstruction_span"].strip()
+        if not span and data["progress"] != "unknown":
+            raise ValueError("Known progress requires an identifiable subinstruction span")
+        if span and span not in row["instruction"]:
             raise ValueError("Subinstruction must be a literal span of the full instruction")
         if data["visibility"] in ("current", "history_only", "both"):
             if not data["target_landmarks"]:
