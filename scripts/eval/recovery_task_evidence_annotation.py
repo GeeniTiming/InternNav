@@ -231,6 +231,38 @@ def validate(args):
     return result
 
 
+def render(args):
+    """Generate deterministic contact sheets for review, no model/annotations."""
+    from PIL import Image, ImageDraw
+    root = Path(args.annotation_dir).resolve()
+    rows = acquire.read_records(root / "annotations.jsonl")
+    out = root / "previews"
+    out.mkdir(exist_ok=False)
+    if not 1 <= int(args.history_panels) <= 12:
+        raise ValueError("history-panels must be 1..12")
+    width, height, margin, heading = 256, 256, 12, 35
+    for row in rows:
+        prior = list(enumerate(row["historical_rgb"]))
+        samples = prior[-int(args.history_panels):]
+        current_slot = len(row["historical_rgb"])
+        panels = [(index, path, "HISTORY") for index, path in samples]
+        panels.append((current_slot, row["current_rgb"], "CURRENT"))
+        sheet = Image.new("RGB", ((width + margin) * len(panels), height + heading + 2 * margin), "white")
+        draw = ImageDraw.Draw(sheet)
+        source = Path(row["source_capture_dir"])
+        for index, (slot, path, role) in enumerate(panels):
+            with Image.open(source / path) as im:
+                rgb = im.convert("RGB")
+                rgb.thumbnail((width, height))
+            x = index * (width + margin) + (width - rgb.width) // 2
+            y = heading + margin + (height - rgb.height) // 2
+            sheet.paste(rgb, (x, y))
+            draw.text((index * (width + margin) + 2, 5),
+                      f"slot {slot} {role}", fill="black")
+        sheet.save(out / (row["annotation_id"] + ".png"))
+    print("ANNOTATION_PREVIEWS=PASS", len(rows), "sheets at", out)
+
+
 def compare(args):
     """Independent reviewer agreement; no adjudication by model/outcomes."""
     a, b = Path(args.review_a).resolve(), Path(args.review_b).resolve()
@@ -301,6 +333,10 @@ def main(argv=None):
     compare_parser.add_argument("--review-b", required=True)
     compare_parser.add_argument("--out-json")
     compare_parser.set_defaults(function=compare)
+    preview = subs.add_parser("render")
+    preview.add_argument("--annotation-dir", required=True)
+    preview.add_argument("--history-panels", type=int, default=4)
+    preview.set_defaults(function=render)
     args = p.parse_args(argv)
     args.function(args)
 
