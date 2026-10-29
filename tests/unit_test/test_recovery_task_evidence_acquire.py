@@ -200,6 +200,9 @@ class AcquisitionTests(unittest.TestCase):
                 "target_landmarks": ["bed"], "visibility": "current",
                 "ambiguity": "one_candidate", "history_consistency": "insufficient",
                 "support_image_refs": ["images/current.png"],
+                "support_image_slots": [0],
+                "evidence_regions": [{"slot": 0, "landmark": "bed",
+                    "bbox_xyxy_norm": [0.1, 0.1, 0.5, 0.5]}],
                 "reason": "Visible bed supports this target", "confidence": "medium",
             }
         }
@@ -208,6 +211,10 @@ class AcquisitionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "pre-decision"):
             ann.check_row(row, native)
         row["annotation"]["support_image_refs"] = ["images/current.png"]
+        row["annotation"]["support_image_slots"] = [1]
+        with self.assertRaisesRegex(ValueError, "valid native input indices"):
+            ann.check_row(row, native)
+        row["annotation"]["support_image_slots"] = [0]
         row["annotation"]["current_subinstruction_span"] = "invented goal"
         with self.assertRaisesRegex(ValueError, "literal span"):
             ann.check_row(row, native)
