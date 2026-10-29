@@ -66,6 +66,47 @@ Do not run GPU if the CPU test fails. Check that
 frozen model checkpoints exist. The CPU prepare verifies actual source
 annotations and scene assets. Do not silently switch to val_unseen.
 
+## Recovery from the initial scene-ID path mismatch (October 29)
+
+The first GPU smoke run in `task_evidence_train_smoke_02_02`
+failed at the first System-2 input because the recorder compared
+the raw `ep.scene_id` with the raw manifest string. The native
+Habitat path can have a different root/representation from the
+annotation's scene path. The fixed recorder compares the project's
+canonical `failure_case_probe.episode_key()` tuple
+`(scene-file-stem, str(episode_id))`; it still rejects unexpected
+keys and refuses duplicate canonical IDs.
+
+This is a **capture identity bug**, not a navigator failure, and
+the failed run cannot serve as an experimental outcome. Because
+the new script has a different source hash and both `control/`
+and `capture/` may already exist, the original `02_02`
+directory is frozen. **Do not delete, edit, or resume it.**
+
+For this first rerun, use the SAME source-selection parameters as
+the old pilot with a fresh directory `task_evidence_train_smoke_02_03`:
+
+```bash
+git pull --ff-only
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+python -m unittest discover -s tests/unit_test \
+  -p 'test_recovery_task_evidence_acquire.py' -v
+
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+python scripts/eval/recovery_task_evidence_acquire.py prepare \
+  --episodes 2 --run-dir data/task_evidence_train_smoke_02_03
+
+set -o pipefail
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES=0 \
+python -u scripts/eval/recovery_task_evidence_acquire.py run \
+  --run-dir data/task_evidence_train_smoke_02_03 \
+  2>&1 | tee task_evidence_train_smoke_02_03.log
+```
+
+Only consider a run complete if the `decision_report.json` status
+is `TRAIN_NATIVE_DECISION_DATASET_READY`. This modification was
+committed remotely; CPU and GPU checks must be run on the server.
+
 ## 2. Run a **2-TRAIN-scene smoke test** (not for method claims)
 
 ```bash
