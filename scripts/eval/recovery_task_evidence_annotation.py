@@ -210,6 +210,58 @@ def validate(args):
     return result
 
 
+def compare(args):
+    """Independent reviewer agreement; no adjudication by model/outcomes."""
+    a, b = Path(args.review_a).resolve(), Path(args.review_b).resolve()
+    ma = acquire.pilot.read_json(a / "sampling_manifest.json")
+    mb = acquire.pilot.read_json(b / "sampling_manifest.json")
+    if (ma["source_run"] != mb["source_run"]
+            or ma["source_rows"] != mb["source_rows"]):
+        raise ValueError("Reviewers are not using the same frozen decision sample")
+    rows_a = acquire.read_records(a / "annotations.jsonl")
+    rows_b = acquire.read_records(b / "annotations.jsonl")
+    if (len(rows_a) != ma["count"] or len(rows_b) != ma["count"]):
+        raise ValueError("One review has incomplete annotation rows")
+    native_rows = {
+        int(row["call_id"]): row
+        for row in acquire.read_records(
+            Path(ma["source_run"]) / "capture/online_decisions.jsonl"
+        )
+    }
+    keys = ("progress", "visibility", "ambiguity", "history_consistency")
+    matches = dict.fromkeys(keys, 0)
+    disagreements = []
+    for left, right in zip(rows_a, rows_b):
+        if left["call_id"] != right["call_id"]:
+            raise ValueError("Reviewers' decision ordering differs")
+        native = native_rows[left["call_id"]]
+        if check_row(left, native) != "complete" or check_row(right, native) != "complete":
+            raise ValueError("Both reviewers must complete all labels before comparing")
+        different = {}
+        for key in keys:
+            x, y = left["annotation"][key], right["annotation"][key]
+            matches[key] += int(x == y)
+            if x != y:
+                different[key] = [x, y]
+        if different:
+            disagreements.append({"call_id": left["call_id"], "fields": different})
+    n = len(rows_a)
+    result = {
+        "schema": "task_evidence_interrater.v1",
+        "N_decisions": n,
+        "raw_agreement": {k: matches[k] / n for k in keys},
+        "disagreements": disagreements,
+        "caution": "Raw agreement alone does not establish reliability on imbalanced classes.",
+    }
+    if args.out_json:
+        out = Path(args.out_json)
+        if out.exists():
+            raise FileExistsError("Create-only reviewer comparison report")
+        acquire.pilot.write_json(out, result)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return result
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     subs = p.add_subparsers(dest="command", required=True)
@@ -223,6 +275,11 @@ def main(argv=None):
     checker = subs.add_parser("validate")
     checker.add_argument("--annotation-dir", required=True)
     checker.set_defaults(function=validate)
+    compare_parser = subs.add_parser("compare")
+    compare_parser.add_argument("--review-a", required=True)
+    compare_parser.add_argument("--review-b", required=True)
+    compare_parser.add_argument("--out-json")
+    compare_parser.set_defaults(function=compare)
     args = p.parse_args(argv)
     args.function(args)
 
