@@ -273,6 +273,52 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(sum(r["episode_key"][0] == "a" for r in first), 3)
         self.assertEqual(sum(r["episode_key"][0] == "b" for r in first), 3)
 
+    def test_completed_annotation_can_say_stage_unknown(self):
+        native = decision(9, "scene", 31)
+        annotation = {
+            "schema": ann.SCHEMA, "call_id": native["call_id"],
+            "episode_key": native["episode_key"],
+            "main_step": native["main_step"],
+            "instruction": native["instruction"],
+            "current_rgb": "images/current.png",
+            "historical_rgb": [],
+            "native_action_prefix_count": native["native_action_prefix_count"],
+            "past_action_codes": [],
+            "episode_action_prefix_count": 0,
+            "duplicate_current_history_slots": [],
+            "annotation": {
+                "status": "complete", "annotator_id": "reviewer1",
+                "current_subinstruction_span": "", "progress": "unknown",
+                "target_landmarks": [], "visibility": "uncertain",
+                "ambiguity": "unknown", "history_consistency": "unknown",
+                "support_image_refs": [], "support_image_slots": [],
+                "evidence_regions": [],
+                "reason": "Insufficient historical context to establish current task stage",
+                "confidence": "low",
+            },
+        }
+        self.assertEqual(ann.check_row(annotation, native), "complete")
+        annotation["annotation"]["progress"] = "at_subgoal"
+        with self.assertRaisesRegex(ValueError, "Known progress"):
+            ann.check_row(annotation, native)
+        annotation["annotation"]["progress"] = "unknown"
+        annotation["duplicate_current_history_slots"] = [0]
+        with self.assertRaisesRegex(ValueError, "duplicate-image"):
+            ann.check_row(annotation, native)
+
+    def test_action_prefix_is_relative_to_episode_even_if_absolute_index_global(self):
+        row = decision(17, "sceneB", 4)
+        row["native_action_prefix_count"] = 6
+        timeline = [
+            {"episode_key": ["sceneA", "1"], "action": 2},
+            {"episode_key": ["sceneA", "1"], "action": 2},
+            {"episode_key": ["sceneA", "1"], "action": 1},
+            {"episode_key": ["sceneB", "1"], "action": 5},
+            {"episode_key": ["sceneB", "1"], "action": 4},
+            {"episode_key": ["sceneB", "1"], "action": 3},
+        ]
+        self.assertEqual(ann.preceding_action_codes(row, timeline), [5, 4, 3])
+
     def test_annotation_source_validation(self):
         native = decision(5, "scene", 22)
         row = {
