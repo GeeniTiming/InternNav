@@ -195,7 +195,19 @@ python scripts/eval/recovery_task_evidence_annotation.py render \
 ```
 
 The PNGs are saved to `previews/` and are deliberately NOT classifier
-features or evidence labels. Render is create-only.
+features or evidence labels. Render is create-only. For complete historical
+auditing (up to all eight native history slots), create **another** output
+folder without replacing the existing 4-history preview:
+
+```bash
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+python scripts/eval/recovery_task_evidence_annotation.py render \
+  --annotation-dir data/task_evidence_annotations_smoke_06_01 \
+  --history-panels 8 \
+  --out-dir data/task_evidence_smoke_full_history_previews_06_01
+```
+
+The original annotation JSONL and native acquisition run remain unchanged.
 
 For each decision, read the image files under the absolute
 `source_capture_dir`. The ordered `historical_rgb` list is exactly
@@ -226,12 +238,23 @@ Fields to annotate:
 - `reason`, `confidence`, `annotator_id` and
   `status` (`unreviewed`, `needs_review`, `complete`)
 
-For `complete` a nonempty annotator, reason, literal subinstruction
-and, whenever a landmark is marked visible, corresponding cited
-image **slots** are required. For conflicts cite at least two
-predecision slots. The tool rejects unsupported references and
-invalid normalized boxes, but cannot itself verify semantic truth.
-Human adjudication is still necessary.
+For `complete`, a nonempty annotator and evidence/uncertainty reason
+are required. If the current subinstruction **cannot** be justified from
+pre-decision evidence, `progress="unknown"` and an empty
+`current_subinstruction_span` are valid completed judgments; do not
+invent a stage. If progress is known, the subinstruction must be a
+literal span of the instruction. Visible landmarks need cited image
+**slots**; conflicts need two distinct predecision image slots.
+The tool checks provenance and box syntax, **not** semantic truth.
+
+The template explicitly distinguishes `native_action_prefix_count`
+(global run-relative index) from `episode_action_prefix_count`
+(local to this episode). It records `duplicate_current_history_slots`
+when a historical image has **identical pixel content** to the current
+view. Such repeated images do not constitute independent visual
+evidence. In particular, `visibility="both"` denotes presence in
+both input *slots*, not independently acquired landmarks.
+Class-specific adjudication and human reliability checks remain necessary.
 
 Example **illustrative structure**, not an observed episode:
 
