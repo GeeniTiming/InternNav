@@ -97,6 +97,8 @@ def make_template(row, source):
             "ambiguity": "unknown",
             "history_consistency": "unknown",
             "support_image_refs": [],
+            "support_image_slots": [],
+            "evidence_regions": [],
             "reason": "",
             "confidence": "low",
         },
@@ -149,6 +151,26 @@ def check_row(row, native):
         raise ValueError("Invalid evidence-state value")
     if any(x not in originals for x in data["support_image_refs"]):
         raise ValueError("Support images must be from the pre-decision System-2 inputs")
+    slots = data.get("support_image_slots", [])
+    if not isinstance(slots, list) or any(
+        type(x) is not int or not 0 <= x < len(originals) for x in slots
+    ):
+        raise ValueError("Support image slots must be valid native input indices")
+    if any(originals[i] not in data["support_image_refs"] for i in slots):
+        raise ValueError("Every cited image slot must correspond to a support image reference")
+    regions = data.get("evidence_regions", [])
+    if not isinstance(regions, list):
+        raise ValueError("evidence_regions must be a list")
+    for reg in regions:
+        if (not isinstance(reg, dict)
+                or type(reg.get("slot")) is not int or reg["slot"] not in slots
+                or reg.get("landmark") not in data["target_landmarks"]):
+            raise ValueError("Evidence region must reference a cited slot and landmark")
+        bbox = reg.get("bbox_xyxy_norm")
+        if (not isinstance(bbox, list) or len(bbox) != 4
+                or any(not isinstance(x, (int, float)) or not 0 <= x <= 1 for x in bbox)
+                or not bbox[0] < bbox[2] or not bbox[1] < bbox[3]):
+            raise ValueError("Evidence region box must have valid normalized xyxy coordinates")
     if not isinstance(data["target_landmarks"], list) or any(
         not isinstance(item, str) or not item.strip() for item in data["target_landmarks"]
     ):
@@ -163,18 +185,17 @@ def check_row(row, native):
         if data["visibility"] in ("current", "history_only", "both"):
             if not data["target_landmarks"]:
                 raise ValueError("Visible target requires at least one named landmark")
-            expected = set(originals[-1:] if data["visibility"] == "current" else
-                           originals[:-1] if data["visibility"] == "history_only" else
-                           originals)
-            if not set(data["support_image_refs"]) & expected:
-                raise ValueError("Visible landmark must cite a corresponding image")
-            if data["visibility"] == "both" and not (
-                set(data["support_image_refs"]) & set(originals[:-1])
-                and originals[-1] in data["support_image_refs"]
-            ):
-                raise ValueError("Both visibility needs current and history image references")
-        if data["history_consistency"] == "conflicting" and len(set(data["support_image_refs"])) < 2:
-            raise ValueError("Conflicting history requires two independently cited predecision images")
+            current = len(originals) - 1
+            has_current = current in slots
+            has_history = any(i < current for i in slots)
+            if data["visibility"] == "current" and not has_current:
+                raise ValueError("Current visibility requires a current image slot")
+            if data["visibility"] == "history_only" and not has_history:
+                raise ValueError("History visibility requires a historical image slot")
+            if data["visibility"] == "both" and not (has_history and has_current):
+                raise ValueError("Both visibility requires current and historical image slots")
+        if data["history_consistency"] == "conflicting" and len(set(slots)) < 2:
+            raise ValueError("Conflicting history requires two independently cited predecision slots")
     return data["status"]
 
 
