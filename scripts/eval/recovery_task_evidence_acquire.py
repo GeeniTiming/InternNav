@@ -278,6 +278,7 @@ class DecisionRecorder:
             "current_image_ref": refs[-1]["path"] if call_type == "ordinary" else None,
             "remaining_main_step_budget": budget,
             "prompt_text": str(prompt),
+            "rendered_prompt": str(rendered_prompt),
             "rendered_prompt_sha256": hashlib.sha256(rendered_prompt.encode("utf-8")).hexdigest(),
         }
         validate_online_row(row)
@@ -416,6 +417,19 @@ def report(args):
             images.add(ref["path"])
     if len(images) != summary["N_unique_images"]:
         raise ValueError("Stored image count mismatch")
+    # Publish only past action codes as an online-legal timeline, never poses.
+    # Every decision references the index *before* its System-2 generation.
+    action_only = root / "capture/online_action_codes.jsonl"
+    with action_only.open("w", encoding="utf-8") as f:
+        for index, row in enumerate(actions):
+            f.write(json.dumps({
+                "native_action_index": index,
+                "episode_key": list(capture.episode_key(row)),
+                "action": int(row["action"]),
+            }, ensure_ascii=False) + "\n")
+    for row in records:
+        if row["native_action_prefix_count"] > len(actions):
+            raise ValueError("System-2 decision references future native actions")
     results = {
         "schema": SCHEMA, "status": "TRAIN_NATIVE_DECISION_DATASET_READY",
         "split": "train", "N_episodes": len(expected),
