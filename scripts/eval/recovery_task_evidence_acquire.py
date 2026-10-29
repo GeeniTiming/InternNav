@@ -114,7 +114,12 @@ def prepare(args):
         "selector_fields": list(SELECTOR_FIELDS),
         "forbidden_selector_fields": list(EXCLUDED_SELECTOR_FIELDS),
     }
-    manifest["source_hashes"][str(Path(__file__).resolve())] = pilot.sha256(__file__)
+    for path in (
+        Path(__file__).resolve(),
+        pilot.ROOT / "scripts/eval/configs/habitat_dual_system_cfg.py",
+        Path(capture.__file__).resolve(),
+    ):
+        manifest["source_hashes"][str(path)] = pilot.sha256(path)
     pilot.write_json(root / "manifest.json", manifest)
     pilot.verify_manifest(root)
     print("TASK_EVIDENCE_PREPARE=PASS", args.episodes,
