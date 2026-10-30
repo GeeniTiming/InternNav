@@ -41,7 +41,9 @@ def native_contexts(checkpoint_run):
         raise ValueError("Checkpoint report order differs from predeclared cohort")
     ep_by_key = {capture.episode_key(e): e for e in dataset["episodes"]}
     observed = {tuple(c["key"]): [] for c in report["cases"]}
-    for row in physical.read_lines(root / "control/capture_actions.jsonl"):
+    # Use native plain rows: capture_actions.jsonl includes an extra main_step
+    # field, whereas the original locked prefix digest used untagged actions.
+    for row in physical.read_lines(root / "control/actions.jsonl"):
         key = capture.episode_key(row)
         if key not in observed:
             raise ValueError("Unexpected action episode during checkpoint capture")
