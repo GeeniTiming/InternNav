@@ -179,7 +179,9 @@ class JointProbe(iso.MechanismProbe):
 
     def on_boundary(self, step, observations, done, history, action_seq,
                     pixel_goal, local_actions, action):
-        before = self.gate is not None
+        # First native loop iteration precedes TurnProbe.begin(), which
+        # initializes self.gate. Do not access a missing attribute here.
+        before = getattr(self, "gate", None) is not None
         result = super().on_boundary(
             step, observations, done, history, action_seq,
             pixel_goal, local_actions, action,
