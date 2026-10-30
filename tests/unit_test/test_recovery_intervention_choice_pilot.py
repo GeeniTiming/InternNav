@@ -92,7 +92,8 @@ class ChoicePilotTests(TestCase):
             choice.pilot.write_json(folder / "evidence_input.json", {
                 "events": [{"main_step": 20, "prompt": choice.iso.EXTRA_PROMPT,
                             "source": "duplicate_current",
-                            "supplementary_pixel_sha256": "c"}],
+                            "supplementary_pixel_sha256": "c",
+                            "same_image_count": True}],
                 "scan_view_sha256": "v", "post_return_current_sha256": "c",
             })
             self.assertEqual(choice.validate_joint_case(
