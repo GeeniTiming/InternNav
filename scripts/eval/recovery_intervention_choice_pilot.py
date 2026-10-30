@@ -433,6 +433,8 @@ def report(args):
             d = new_details[name][key]
             folder = root / name / "checkpoints" / (key[0] + "_" + key[1])
             evidence = validate_joint_case(d, folder, name, checkpoint)
+            if d["handoff"].get("charged_native_limit") != protocol["charged_native_main_step_limit"]:
+                raise RuntimeError("NOT_COMPARABLE: six scan actions not charged to native budget")
             trace = [t for t in new_traces[name] if capture.episode_key(t) == key]
             if not pilot.compare_traces(trace_source[key][:n], trace[:n])["actions_and_poses_match"]:
                 raise RuntimeError("NOT_COMPARABLE: old/native prefix diverged")
