@@ -5,6 +5,8 @@ from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
+from unittest.mock import patch
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/eval"))
@@ -112,6 +114,83 @@ class TrainCohortTests(TestCase):
 
 
 class CheckpointEvidenceTests(TestCase):
+    def test_checkpoint_context_has_exact_native_history_and_prefix(self):
+        with TemporaryDirectory() as tmp:
+            source = Path(tmp) / "native"
+            source.mkdir()
+            root = Path(tmp) / "checkpoint"
+            folder = root / "control/checkpoints/SceneC_2"
+            hist_dir = folder / "historical_rgb"
+            hist_dir.mkdir(parents=True)
+            native_ep = episode("SceneC", 2,
+                "Go around the table and stop beside the doorway.")
+            image = Image.new("RGB", (12, 12), (10, 25, 30))
+            current = Image.new("RGB", (12, 12), (40, 50, 60))
+            hpath = hist_dir / "history_0000.png"
+            cpath = folder / "current_model_rgb.png"
+            image.save(hpath)
+            current.save(cpath)
+            instructions = native_ep["instruction"]["instruction_text"]
+            actions = []
+            for act in (3, 4):
+                actions.append({
+                    "scene_id": native_ep["scene_id"], "episode_id": "2",
+                    "action": act, "done": False, "position": [0., 0., 0.],
+                    "orientation_wxyz": [1., 0., 0., 0.]
+                })
+            (root / "control").mkdir(exist_ok=True)
+            with (root / "control/actions.jsonl").open("w") as stream:
+                for action in actions:
+                    stream.write(json.dumps(action) + "\n")
+            gate = {
+                "step": 30, "history_sha256": "frozen_history",
+                "prefix_action_count": 2,
+                "prefix_trace_sha256": evidence.cp.cohort.digest(actions),
+            }
+            evidence.pilot.write_json(folder / "context_inputs.json", {
+                "schema": "independent_recovery_context_inputs.v1",
+                "key": ["SceneC", "2"], "main_step": 30,
+                "history_sha256": "frozen_history",
+                "sampled_history": [{
+                    "path": "historical_rgb/history_0000.png",
+                    "pixel_sha256": evidence.physical.history_hash([image]),
+                    "png_sha256": evidence.pilot.sha256(hpath),
+                }],
+                "current_model_rgb_path": "current_model_rgb.png",
+                "current_model_rgb_pixel_sha256":
+                    evidence.physical.history_hash([current]),
+                "current_model_rgb_png_sha256": evidence.pilot.sha256(cpath),
+            })
+            evidence.pilot.write_json(root / "checkpoint_report.json", {
+                "schema": "independent_recovery_checkpoints.v1",
+                "status": "CHECKPOINTS_READY_FOR_INTERVENTION_PREPARATION",
+                "cases": [{
+                    "key": ["SceneC", "2"],
+                    "status": "COMPARABLE_CHECKPOINT_CAPTURED",
+                    "checkpoint": gate,
+                }],
+            })
+            plan = {"cases": [{
+                "key": ["SceneC", "2"], "instruction": instructions,
+            }]}
+            data = (plan, None, source, None,
+                    {"episodes": [native_ep]}, None, None)
+            with patch.object(evidence.cp, "read_run", return_value=(None, data)), \
+                 patch.object(evidence.pilot, "verify_manifest", return_value={}), \
+                 patch.object(evidence.train, "validate_selection",
+                              return_value=[("SceneC", "2")]):
+                records = evidence.native_contexts(root)
+            self.assertEqual(len(records), 1)
+            row = records[0]
+            self.assertEqual(row["main_step"], 30)
+            self.assertEqual(row["past_action_codes"], [3, 4])
+            self.assertEqual(row["episode_action_prefix_count"], 2)
+            self.assertEqual(row["instruction"], instructions)
+            self.assertEqual(row["annotation"]["status"], "unreviewed")
+            # Extra future/offline state must never be exported.
+            self.assertNotIn("distance_to_goal", row)
+            self.assertNotIn("sim_position", row)
+
     def test_unknown_stage_and_landmark_roles(self):
         self.assertEqual(evidence.validate_review(blank_record()), "complete")
 
