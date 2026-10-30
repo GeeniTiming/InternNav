@@ -38,10 +38,10 @@ This is a cost/provenance/mechanism audit, not proof that a view is task-relevan
 
 ## CPU preflight (safe: no model loaded, no GPU)
 
-The old evidence-isolation report **must** exist and say \`MECHANISM_PILOT_VALIDATED\`.
-The previously discussed source directory was \`data/recovery_evidence_isolation_02_02\`; verify it on your server before using this illustrative path. The program automatically follows its manifest to the original checkpoint and factorial.
+The old evidence-isolation report **must** exist and say `MECHANISM_PILOT_VALIDATED`.
+The previously discussed source directory was `data/recovery_evidence_isolation_02_02`; verify it on your server before using this illustrative path. The program automatically follows its manifest to the original checkpoint and factorial.
 
-\`\`\`bash
+```bash
 cd ~/InternNav
 git fetch origin
 git switch exp/intervention-choice-pilot-v1
@@ -60,15 +60,15 @@ PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
 python scripts/eval/recovery_intervention_choice_pilot.py prepare \
   --mechanism-run data/recovery_evidence_isolation_02_02 \
   --run-dir data/intervention_choice_02_01
-\`\`\`
+```
 
 Expected CPU pass:
-\`INTERVENTION_CHOICE_PREPARE=PASS 2 contexts; new GPU arms=2; existing controls=4\`.
+`INTERVENTION_CHOICE_PREPARE=PASS 2 contexts; new GPU arms=2; existing controls=4`.
 If this fails, **stop** and inspect the error instead of running GPU or changing the source selection. The prepare manifest locks hashes of inputs, original comparator arms, configs and old experiment scripts.
 
 ## GPU only after CPU acceptance
 
-\`\`\`bash
+```bash
 set -o pipefail
 
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES=0 \
@@ -82,39 +82,39 @@ python -u scripts/eval/recovery_intervention_choice_pilot.py run \
   --run-dir data/intervention_choice_02_01 \
   --arm lookback_right45_evidence \
   2>&1 | tee intervention_choice_seek_reset_02_01.log
-\`\`\`
+```
 
 Only two new arms; each arm replays two original scenes. GPU work is sequential and no successful old arm is re-run.
 
 Then execute the **strict comparability report**:
 
-\`\`\`bash
+```bash
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
 python scripts/eval/recovery_intervention_choice_pilot.py report \
   --run-dir data/intervention_choice_02_01
-\`\`\`
+```
 
 The report saves:
-\`data/intervention_choice_02_01/six_arm_comparability_report.json\`.
+`data/intervention_choice_02_01/six_arm_comparability_report.json`.
 
 Successful gate status:
-\`TWO_SCENE_MECHANISM_COMPARABLE\`.
+`TWO_SCENE_MECHANISM_COMPARABLE`.
 
 ## How to interpret outcomes, once comparability is established
 
 The report lists six paired success indicators and final NE for each of two contexts, as well as **descriptive** contrasts:
 
-\`SEEK_KEEP − PLACEBO_KEEP\`: effect of true additional RGB vs duplicate under KEEP history.
+`SEEK_KEEP − PLACEBO_KEEP`: effect of true additional RGB vs duplicate under KEEP history.
 
-\`SEEK_RESET − PLACEBO_RESET\`: equivalent extra-RGB contrast under RESET.
+`SEEK_RESET − PLACEBO_RESET`: equivalent extra-RGB contrast under RESET.
 
-\`RESET − KEEP\`: effect of RESET when no physical scan occurs.
+`RESET − KEEP`: effect of RESET when no physical scan occurs.
 
-\`PLACEBO_RESET − PLACEBO_KEEP\`: history effect within equal-cost placebo scans.
+`PLACEBO_RESET − PLACEBO_KEEP`: history effect within equal-cost placebo scans.
 
-\`SEEK_RESET − SEEK_KEEP\`: history effect within equal-cost real-image scans.
+`SEEK_RESET − SEEK_KEEP`: history effect within equal-cost real-image scans.
 
-\`(SEEK_RESET − PLACEBO_RESET) − (SEEK_KEEP − PLACEBO_KEEP)\`: descriptive effect interaction (not established causal mediation or generalization).
+`(SEEK_RESET − PLACEBO_RESET) − (SEEK_KEEP − PLACEBO_KEEP)`: descriptive effect interaction (not established causal mediation or generalization).
 
 **N=2 is too small** to infer reliable average effects or label-dependent benefit. This study is not a 12-state or 72-rollout test. The fixed 45-degree view also cannot verify task relevance. Do **not** select the best arm retrospectively as an online agent.
 
