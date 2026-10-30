@@ -16,6 +16,7 @@ import recovery_task_evidence_acquire as acquire
 
 pilot, capture = acquire.pilot, acquire.capture
 SCHEMA = "train_scene_disjoint_native_acquisition.v1"
+ORIGINAL_SCENE_SELECTOR = acquire.select_train_scenes
 # Known visually inspected or previously intervened scenes from earlier pilots.
 # Source-run exclusion is ALSO accepted and verified at preparation.
 INSPECTED = frozenset({
@@ -35,7 +36,7 @@ def scene_stems_from_locked_run(run_dir):
     return {capture.episode_key(ep)[0] for ep in rows}
 
 
-def select_outcome_blind_new_scenes(dataset, count, excluded):
+def select_outcome_blind_new_scenes(dataset, count, excluded, base_selector=None):
     """Filter by pre-existing scene names; original annotation order retained."""
     excluded = frozenset(excluded)
     filtered = copy.deepcopy(dataset)
@@ -43,7 +44,11 @@ def select_outcome_blind_new_scenes(dataset, count, excluded):
         ep for ep in dataset["episodes"]
         if capture.episode_key(ep)[0] not in excluded
     ]
-    result = acquire.select_train_scenes(filtered, count)
+    # The outer prepare temporarily installs a selection callback into
+    # acquire; capture the original selector to avoid recursive dispatch.
+    if base_selector is None:
+        base_selector = ORIGINAL_SCENE_SELECTOR
+    result = base_selector(filtered, count)
     keys = [capture.episode_key(ep) for ep in result["episodes"]]
     if (len(keys) != count or len({k[0] for k in keys}) != count
             or any(k[0] in excluded for k in keys)):
