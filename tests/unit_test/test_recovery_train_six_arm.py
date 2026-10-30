@@ -131,7 +131,7 @@ class HistoryGateTest(TestCase):
                     self.make_detail(reset=False), gate(), False)
 
     def test_runner_does_not_treat_preliminary_labels_as_gold(self):
-        self.assertIn("PRELIMINARY", pilot.SCOPE or "PRELIMINARY")
+        self.assertIn("preliminary", pilot.SCOPE.lower())
         self.assertNotIn("val_unseen", pilot.SCOPE)
         self.assertIn("native success=1", pilot.SCOPE)
 
