@@ -50,7 +50,8 @@ class ChoicePilotTests(TestCase):
             folder = Path(tmp) / "lookback_right45_evidence" / "checkpoints" / "scene_1"
             folder.mkdir(parents=True)
             probe = choice.JointProbe.__new__(choice.JointProbe)
-            probe.gate = None
+            # Actual first callback occurs before TurnProbe.begin()
+            # creates gate; emulate the attribute's absence.
             probe.current = ("scene", "1")
             probe.directory = Path(tmp) / "lookback_right45_evidence"
             probe.history_cutoff = None
