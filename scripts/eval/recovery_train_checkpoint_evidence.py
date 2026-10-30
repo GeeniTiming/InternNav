@@ -48,6 +48,7 @@ def native_contexts(checkpoint_run):
         if key not in observed:
             raise ValueError("Unexpected action episode during checkpoint capture")
         observed[key].append(row)
+    from PIL import Image
     results = []
     for case in report["cases"]:
         key = tuple(case["key"])
@@ -71,13 +72,21 @@ def native_contexts(checkpoint_run):
         for item in details["sampled_history"]:
             p = folder / item["path"]
             if not p.is_file() or pilot.sha256(p) != item["png_sha256"]:
-                raise ValueError("Historical RGB pixels or file missing")
+                raise ValueError("Historical RGB PNG or file changed")
+            with Image.open(p) as opened:
+                pixel_sha = physical.history_hash([opened.copy()])
+            if pixel_sha != item["pixel_sha256"]:
+                raise ValueError("Historical model RGB pixel digest mismatch")
             refs.append(str(p.relative_to(root)))
             hashes.append(item["pixel_sha256"])
         current_path = folder / details["current_model_rgb_path"]
         if (not current_path.is_file()
                 or pilot.sha256(current_path) != details["current_model_rgb_png_sha256"]):
-            raise ValueError("Native current-model RGB pixels changed")
+            raise ValueError("Native current-model RGB PNG changed")
+        with Image.open(current_path) as opened:
+            current_pixel_sha = physical.history_hash([opened.copy()])
+        if current_pixel_sha != details["current_model_rgb_pixel_sha256"]:
+            raise ValueError("Native current-model RGB pixel digest mismatch")
         current = str(current_path.relative_to(root))
         hashes.append(details["current_model_rgb_pixel_sha256"])
         # No future actions may enter this record. Index is local to Episode.
