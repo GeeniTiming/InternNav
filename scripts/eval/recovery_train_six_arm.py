@@ -242,47 +242,22 @@ def read_run(root):
     return source, annotation, protocol
 
 
-class ScanKeep(iso.MechanismProbe):
-    """Translate new arm names to old pure scan behavior, without changing code."""
-    def __init__(self, evaluator, root, arm, protocol, references):
-        super().__init__(evaluator, root, arm, protocol, references)
-
-    def on_boundary(self, *args):
-        original = iso.ARM_ANGLES
-        # Do NOT mutate global code/constants in case other tasks run.
-        # The original scanner reads global ARM_ANGLES; use an isolated
-        # snapshot with the new arm names already predeclared in this process.
-        return super().on_boundary(*args)
-
-
-# The old scanner references ARM_ANGLES[self.arm] and its 4 canonical strings;
-# use canonical internal names only for the scanner while putting output in
-# the new arm directory. Canonical behavior is selected by view type, and
-# the report subsequently checks the actual yaw trace and image provenance.
+# Canonical scan names are only an internal behavior selector. All saved
+# action streams and diagnostic files must remain under the NEW arm directory.
+# Importantly, TurnProbe.__init__ opens the per-arm action file immediately:
+# pass the actual new arm name to its constructor, not the canonical alias.
 class ScanKeepProbe(iso.MechanismProbe):
     def __init__(self, evaluator, root, arm, protocol, references):
-        super().__init__(evaluator, root, VIEW[arm], protocol, references)
-        self.arm = VIEW[arm]
-        self.directory = root / arm
+        super().__init__(evaluator, root, arm, protocol, references)
         self.output_arm = arm
-
-    def begin(self, key):
-        super().begin(key)
-        self.directory = self.root / self.output_arm
-        self.arm = VIEW[self.output_arm]
+        self.arm = VIEW[arm]
 
 
 class ScanResetProbe(choice.JointProbe):
     def __init__(self, evaluator, root, arm, protocol, references):
-        super().__init__(evaluator, root, VIEW[arm], protocol, references)
-        self.arm = VIEW[arm]
-        self.directory = root / arm
+        super().__init__(evaluator, root, arm, protocol, references)
         self.output_arm = arm
-
-    def begin(self, key):
-        super().begin(key)
-        self.directory = self.root / self.output_arm
-        self.arm = VIEW[self.output_arm]
+        self.arm = VIEW[arm]
 
 
 def run(args):
