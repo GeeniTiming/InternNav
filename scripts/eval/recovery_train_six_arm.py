@@ -511,6 +511,17 @@ def report(args):
             "navigation_error_contrasts_m": contrasts["navigation_error_contrasts_m"],
             "checks": meta,
         })
+    # A descriptive harm tally only: ALL six native KEEP controls succeeded.
+    # Counts and means are not independent evidence of generalization.
+    counts_by_condition = {}
+    for label in COMPARISONS:
+        vals = [r["outcomes"][label] for r in rows]
+        success_count = sum(v["success"] == 1 for v in vals)
+        counts_by_condition[label] = {
+            "N": len(vals), "successes": success_count,
+            "harmed_native_successes": len(vals) - success_count,
+            "mean_final_ne_m": sum(v["ne"] for v in vals) / len(vals),
+        }
     result = {
         "schema": "train_six_arm_intervention_report.v1",
         "status": "SIX_TRAIN_SCENE_COMPARABLE",
@@ -521,7 +532,9 @@ def report(args):
         "preintervention_evidence_sha256": pilot.sha256(
             annotation / "annotations.jsonl"),
         "review_status": "PRELIMINARY_NOT_HUMAN_CONFIRMED",
-        "arm_mapping": COMPARISONS, "per_context": rows,
+        "arm_mapping": COMPARISONS,
+        "descriptive_counts_by_condition": counts_by_condition,
+        "per_context": rows,
         "scope": SCOPE,
         "not_estimated": [
             "failure_rescue", "out_of_scene_generalization",
