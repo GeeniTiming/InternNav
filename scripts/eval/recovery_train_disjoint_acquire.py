@@ -80,7 +80,10 @@ def prepare(args):
     if root.exists():
         raise FileExistsError("Create-only train-source directory: " + str(root))
     excluded = set(INSPECTED)
-    excluded.update(str(x) for x in args.exclude_scene)
+    excluded.update(
+        capture.episode_key({"scene_id": str(x), "episode_id": "0"})[0]
+        for x in args.exclude_scene
+    )
     watched = []
     for run in args.exclude_source_run:
         path = Path(run).resolve() / "manifest.json"
