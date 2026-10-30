@@ -89,7 +89,8 @@ def compare_6_conditions(outcomes):
         if set(arms) != required:
             raise ValueError("Missing six comparison arms: " + repr(key))
         for arm, value in arms.items():
-            if int(value["success"]) not in (0, 1):
+            if (type(value["success"]) not in (bool, int, float)
+                    or float(value["success"]) not in (0.0, 1.0)):
                 raise ValueError("Nonbinary success: " + arm)
             if not math.isfinite(float(value["ne"])):
                 raise ValueError("Nonfinite navigation error: " + arm)
@@ -160,7 +161,8 @@ def validate_joint_case(detail, folder, arm, checkpoint):
     evidence = pilot.read_json(folder / "evidence_input.json")
     events = evidence.get("events", [])
     if (len(events) != 1 or events[0]["main_step"] != checkpoint["step"]
-            or events[0]["prompt"] != iso.EXTRA_PROMPT):
+            or events[0]["prompt"] != iso.EXTRA_PROMPT
+            or events[0].get("same_image_count") is not True):
         raise ValueError("NOT_COMPARABLE: one supplementary image required")
     expected = "outward_view" if arm.endswith("_evidence") else "duplicate_current"
     if events[0]["source"] != expected:
@@ -206,8 +208,8 @@ def prepare(args):
     if root.exists():
         raise FileExistsError("Create-only: choose a NEW run-dir")
     source, factorial, old_protocol, saved = original_runs(mechanism)
-    if len(old_protocol["cases"]) != 2 and not args.allow_nonpilot_case_count:
-        raise ValueError("This engineering pilot is locked to two old cases only")
+    if len(old_protocol["cases"]) != 2:
+        raise ValueError("This engineering pilot is restricted to the two original development contexts")
     if any(iso.ARM_ANGLES[a] != -45 for a in JOINT_ARMS):
         raise ValueError("Only fixed right45 scan is predeclared")
     cfg = pilot.load_config(source / "control.py")
@@ -226,6 +228,7 @@ def prepare(args):
         "charged_native_main_step_limit": old_protocol["charged_native_main_step_limit"],
         "forced_native_actions": iso.SCAN_ACTIONS,
         "source_split": "existing_development_checkpoints_only",
+        "source_selection_frozen": True,
         "scope": SCOPE,
         "separation": (
             "KEEP/RESET cost 0 forced scan actions; four scan-based arms cost "
@@ -499,8 +502,6 @@ def main(argv=None):
     prep = subs.add_parser("prepare", help="CPU-only locked source audit and config creation")
     prep.add_argument("--mechanism-run", required=True)
     prep.add_argument("--run-dir", required=True)
-    prep.add_argument("--allow-nonpilot-case-count", action="store_true",
-                      help="Research only: overrides the two-case engineering limit")
     prep.set_defaults(function=prepare)
     for name, handler in (("run", run), ("report", report), ("run-all", run_all)):
         p = subs.add_parser(name)
