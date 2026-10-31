@@ -79,10 +79,10 @@ class GateCompatibilityTests(unittest.TestCase):
 
     def test_other_comparisons_are_not_weakened(self):
         a, e = gate_pair()
-        e["eligible"] = False
+        a["rng_sha256"] = "changed"
         with self.assertRaisesRegex(RuntimeError, "NOT_COMPARABLE"):
             fix.compare_native_gate(
-                a, e, ("eligible",), "other label",
+                a, e, ("rng_sha256",), "other label",
                 basic_same_fields,
             )
 
