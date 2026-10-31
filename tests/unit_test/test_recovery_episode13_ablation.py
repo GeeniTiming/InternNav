@@ -1,5 +1,7 @@
 """CPU tests for the frozen single-episode mechanism diagnosis (no GPU)."""
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 import sys
 import unittest
 
@@ -39,6 +41,47 @@ class ProtocolTest(unittest.TestCase):
         self.assertIn("no reranking", ab.SCOPE)
         self.assertIn("one", ab.SCOPE.lower())
         self.assertNotIn("generalization proved", ab.SCOPE)
+
+
+class FrozenSourceIdentityTest(unittest.TestCase):
+    def test_read_run_uses_frozen_episode_data_not_checkpoint_case_scene_id(self):
+        # Regression: captured checkpoint case intentionally has only 'key',
+        # NOT raw 'scene_id' or 'episode_id' attributes.
+        case = fake_case()
+        checkpoint = Path("/frozen/checkpoint")
+        annotation = Path("/frozen/annotation")
+        previous = Path("/frozen/six_arm")
+        exact_episode = {
+            "scene_id": "mp3d/cV4RVeZvu5T/cV4RVeZvu5T.glb",
+            "episode_id": "13",
+        }
+        lock = {
+            "schema": ab.SCHEMA,
+            "episodes": [exact_episode],
+            "diagnosis": {
+                "source_six_arm_run": str(previous),
+                "checkpoint_run": str(checkpoint),
+                "annotation_dir": str(annotation),
+            },
+        }
+        protocol = ab.make_protocol(case, 500)
+        def read_json(path):
+            return ({"episodes": [exact_episode]} if str(path).endswith(".gz")
+                    else protocol)
+        with (
+            patch.object(ab.pilot, "verify_manifest", return_value=lock),
+            patch.object(ab, "source_check",
+                         return_value=(checkpoint, annotation, {}, case, {})),
+            patch.object(ab.pilot, "read_json", side_effect=read_json),
+            patch.object(ab.pilot, "load_config",
+                         return_value=SimpleNamespace(
+                             eval_settings={"max_steps_per_episode": 500})),
+        ):
+            result = ab.read_run(Path("/frozen/new_run"))
+            self.assertEqual(result[2]["key"], list(ab.TARGET))
+            lock["episodes"][0] = {**exact_episode, "episode_id": "99"}
+            with self.assertRaisesRegex(ValueError, "identity changed"):
+                ab.read_run(Path("/frozen/new_run"))
 
 
 class InjectionTest(unittest.TestCase):
