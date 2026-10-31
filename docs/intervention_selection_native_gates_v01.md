@@ -5,7 +5,7 @@
 Implements two actual InternNav/Habitat collection stages **after** the frozen CPU selection plan exists. No changes to the original native model, old Episode13 or six-scene reports, or the original CPU v0.1 preregistration.
 
 1. `intervention_selection_native_gates_v01.py` replays 12 native TRAIN episodes *without changing behavior* and captures exactly one natural ordinary System-2 gate per case using its preallocated minimum step (20, 40 or 60). It verifies every original native action/pose, full-episode results, predecision RGB/history SHA, RNG and model parameter versions.
-2. `intervention_selection_perturbed_keep_v01.py` uses only audited eligible natural gates. It replays the exact native action prefix, executes exactly three **real Habitat ±15° body yaw actions** to reach the plan's ±45° perturbation, captures the genuine post-yaw RGB at native model size and unchanged pre-gate sampled RGB history, charges three main-loop steps, then completes **KEEP**. This is *one action outcome per perturbed context*, not the full four-arm dataset.
+2. `intervention_selection_perturbed_keep_v01.py` uses only audited eligible natural gates. It replays the exact native action prefix, executes exactly three **real Habitat ±15° body yaw actions** to reach the plan's ±45° perturbation, captures the genuine post-yaw RGB at native model size and unchanged pre-gate sampled RGB history, charges three main-loop steps, then completes **KEEP**. This is *one action outcome per perturbed context*, not the full four-arm dataset. Natural-gate verification is an additional **12-episode native replay** beyond the source-native run; do not omit its compute cost when budgeting later full four-arm acquisition.
 
 CHECKPOINT FILES ARE METADATA + REAL PNG ONLY, **NOT** resumable simulator/model snapshots: every evaluation starts from the beginning with locked native prefix replay. Ineligible cases are retained in reports and are **never** replaced based on SR, NE, or future length.
 
@@ -60,7 +60,7 @@ python -u scripts/eval/intervention_selection_native_gates_v01.py run \
 
 `$NATURAL/natural_checkpoint_report.json` shows `N_captured_gates` and `N_ineligible_retained`. Status is `NATURAL_GATES_AUDITED` if all eligible or `NATURAL_GATES_AUDITED_WITH_INELIGIBLE` if some did not reach their predeclared gate. Both are truthful and retain all original cases; don't silently relax Step 60.
 
-The natural RGB artifacts are under `$NATURAL/control/checkpoints/<scene>_<episode>/`: `current_model_rgb.png`, `historical_rgb/*.png`, `context_inputs.json`, `checkpoint.json`, raw `rgb.png`.
+The natural RGB artifacts are under `$NATURAL/control/checkpoints/<scene>_<episode>/`: `current_model_rgb.png`, `historical_rgb/*.png`, `context_inputs.json`, **`predecision_input.json`** (instruction, legal past action prefix and model RGB references only), `checkpoint.json`, raw `rgb.png`.
 
 ## Stage B2: perturb each audited gate and execute KEEP
 
@@ -77,7 +77,7 @@ python -u scripts/eval/intervention_selection_perturbed_keep_v01.py run \
   2>&1 | tee v01_perturbed_keep.log
 ```
 
-`$PERTURBED/perturbed_keep_report.json` must report `PERTURBED_KEEP_AUDITED` only after pose and hash checks pass. Per-episode artifacts reside at `$PERTURBED/perturbed_keep/checkpoints/<scene>_<episode>/`: `predecision_input.json`, `post_perturb_rgb.png`, `post_perturb_current_model_rgb.png`, `boundary.json`, `handoff.json`. Pose, yaw and offline goal metric stay in the offline boundary/handoff files; never pass them to a selector.
+`$PERTURBED/perturbed_keep_report.json` must report `PERTURBED_KEEP_AUDITED` only after pose and hash checks pass. Per-episode artifacts reside at `$PERTURBED/perturbed_keep/checkpoints/<scene>_<episode>/`: `predecision_input.json` (original instruction, actual past prefix **plus three perturbation yaw actions**, sampled pre-gate history and new actual model RGB), `post_perturb_rgb.png`, `post_perturb_current_model_rgb.png`, `boundary.json`, `handoff.json`. Pose, yaw and offline goal metric stay in the offline boundary/handoff files; never pass them to a selector.
 
 ## Critical paired-comparison and data leakage invariants
 
