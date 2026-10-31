@@ -39,13 +39,22 @@ python -m unittest discover -s tests/unit_test \
 
 These tests do not execute Habitat; only your server GPU runs provide experimental results.
 
+## Locked manifest and corrected code
+
+If you already prepared `data/episode13_mechanism_ablation_01` using the
+original script and saw `KeyError: 'scene_id'`, **preserve** that directory.
+The original preparation pinned the old script SHA-256, so updating the code
+must not silently reuse the original run. The examples below use a NEW
+`data/episode13_mechanism_ablation_02` directory. This is a code compatibility
+fix, not a change of Episode, checkpoint, intervention, or analysis rules.
+
 ## Lock inputs and prepare (CPU only)
 
 ```bash
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
 python scripts/eval/recovery_episode13_ablation.py prepare \
   --six-arm-run data/train_six_arm_06_01 \
-  --run-dir data/episode13_mechanism_ablation_01
+  --run-dir data/episode13_mechanism_ablation_02
 ```
 
 Expected: `EP13_ABLATION_PREPARE=PASS one frozen case; four single-episode runs`.
@@ -58,7 +67,7 @@ Start with the virtual-placebo input-only arm to validate that insertion works w
 set -o pipefail
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES=0 \
 python -u scripts/eval/recovery_episode13_ablation.py run \
-  --run-dir data/episode13_mechanism_ablation_01 \
+  --run-dir data/episode13_mechanism_ablation_02 \
   --arm virtual_placebo_reset \
   2>&1 | tee episode13_virtual_placebo_reset.log
 ```
@@ -69,7 +78,7 @@ If that succeeds, run the other three sequentially:
 for arm in scan_no_injection_reset replay_placebo_reset replay_seek_keep; do
   PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES=0 \
     python -u scripts/eval/recovery_episode13_ablation.py run \
-      --run-dir data/episode13_mechanism_ablation_01 --arm "$arm" \
+      --run-dir data/episode13_mechanism_ablation_02 --arm "$arm" \
       2>&1 | tee "episode13_$arm.log" || exit 1
 done
 ```
@@ -81,15 +90,15 @@ All arms are create-only: on error, retain the partial arm and log for diagnosis
 ```bash
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
 python scripts/eval/recovery_episode13_ablation.py report \
-  --run-dir data/episode13_mechanism_ablation_01 \
+  --run-dir data/episode13_mechanism_ablation_02 \
   | tee episode13_mechanism_ablation_report.log
 ```
 
-Only on complete paired checks should status be `EP13_MECHANISM_COMPARABLE`. Report output is `data/episode13_mechanism_ablation_01/diagnostic_report.json`.
+Only on complete paired checks should status be `EP13_MECHANISM_COMPARABLE`. Report output is `data/episode13_mechanism_ablation_02/diagnostic_report.json`.
 
 Each run saves **all native decoded S2 outputs** and **S2 history-index selections** under:
 
-`data/episode13_mechanism_ablation_01/<arm>/checkpoints/cV4RVeZvu5T_13/`
+`data/episode13_mechanism_ablation_02/<arm>/checkpoints/cV4RVeZvu5T_13/`
 
 with files `system2_outputs.json`, `system2_history_selections.json`, and `diagnostic_inputs.json`. The decoded text is source-generation evidence, not ground truth about internal task progress. Do not assume a Step 33 motor-action divergence is necessarily generated at Step 33; compare the latest S2 outputs preceding the first action mismatch.
 
