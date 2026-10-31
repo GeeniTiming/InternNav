@@ -1,6 +1,6 @@
 # v0.1 paired intervention selection — 2-case pilot and 10-case cohort
 
-The original pre-registered 12 TRAIN-scene episodes have 10 audited natural gates and 2 ineligible gates. Ten perturbed KEEP outcomes have been audited (7 successful, 3 failed). This stage preserves those source runs and runs three NEW actions per context: SEEK_LEFT45, SEEK_RIGHT45 and HISTORY_RESET. Natural and physically perturbed are distinct states; comparisons are made only *within* the same context.
+Each completed arm is immediately checked using the CPU-only audit-arm command; do not proceed to the next arm after a failed audit. The original pre-registered 12 TRAIN-scene episodes have 10 audited natural gates and 2 ineligible gates. Ten perturbed KEEP outcomes have been audited (7 successful, 3 failed). This stage preserves those source runs and runs three NEW actions per context: SEEK_LEFT45, SEEK_RIGHT45 and HISTORY_RESET. Natural and physically perturbed are distinct states; comparisons are made only *within* the same context.
 
 Each SEEK adds six real yaw actions and a genuine outward RGB image at the next System-2 decision; each HISTORY_RESET only filters sampled history indices, not the neural weights/cache. A perturbed arm always replays the same three predeclared real yaw actions and checks the exact original perturb KEEP's pose/RGB/history/RNG before taking its intervention. One run is one create-only arm across predeclared episodes.
 
@@ -39,6 +39,9 @@ do
   python -u scripts/eval/intervention_selection_paired_v01.py run \
     --run-dir "$PILOT" --arm "$arm" \
     2>&1 | tee "v01_first2_$arm.log" || break
+  PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+  python scripts/eval/intervention_selection_paired_v01.py audit-arm \
+    --run-dir "$PILOT" --arm "$arm" || break
 done
 
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
@@ -67,6 +70,9 @@ do
   python -u scripts/eval/intervention_selection_paired_v01.py run \
     --run-dir "$FULL" --arm "$arm" \
     2>&1 | tee "v01_all10_$arm.log" || break
+  PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+  python scripts/eval/intervention_selection_paired_v01.py audit-arm \
+    --run-dir "$FULL" --arm "$arm" || break
 done
 
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
