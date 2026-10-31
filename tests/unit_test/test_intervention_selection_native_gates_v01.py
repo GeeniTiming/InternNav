@@ -80,6 +80,93 @@ class PerCaseEligibilityTests(unittest.TestCase):
         })
 
 
+
+class NativeTerminationTests(unittest.TestCase):
+    def test_done_true_is_normal_native_termination(self):
+        self.assertEqual(
+            nat.native_episode_termination(
+                ("scene", "1"), [{"done": True}], {"steps": 45}, 100),
+            "ENV_DONE",
+        )
+
+    def test_budget_exhaustion_done_false_is_valid_native_completion(self):
+        # Native evaluator loops while step_id <= limit. Once it has
+        # incremented beyond limit, last Habitat action may still be false.
+        self.assertEqual(
+            nat.native_episode_termination(
+                ("scene", "1"), [{"done": False}], {"steps": 101}, 100),
+            "NATIVE_LOOP_BUDGET_EXHAUSTED",
+        )
+
+    def test_done_false_without_exhausted_budget_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "without step budget"):
+            nat.native_episode_termination(
+                ("scene", "1"), [{"done": False}], {"steps": 40}, 100)
+
+    def test_incomplete_native_progress_or_trace_is_rejected(self):
+        for rows, progress, limit in (
+            ([], {"steps": 101}, 100),
+            ([{"done": False}], {"steps": None}, 100),
+            ([{"done": False}], {"steps": 102}, 100),
+            ([{"done": "false"}], {"steps": 101}, 100),
+        ):
+            with self.subTest(rows=rows, progress=progress):
+                with self.assertRaises(ValueError):
+                    nat.native_episode_termination(
+                        ("scene", "1"), rows, progress, limit)
+
+    def test_native_ready_accepts_complete_12_scene_budget_exhaustion(self):
+        # This is the original failing prepare-path: all 12 controls are
+        # accounted for but some last action rows have done=False.
+        manifest = {
+            "episodes": [
+                {"scene_id": f"scene_{i}.glb", "episode_id": str(i)}
+                for i in range(nat.ds.N_CASES)
+            ]
+        }
+        keys = [nat.ds.key_of(ep) for ep in manifest["episodes"]]
+        actions = [
+            {"scene_id": ep["scene_id"], "episode_id": ep["episode_id"],
+             "done": i % 2 == 0, "action": 1}
+            for i, ep in enumerate(manifest["episodes"])
+        ]
+        progress = {
+            key: {"steps": 45 if i % 2 == 0 else 101}
+            for i, key in enumerate(keys)
+        }
+        summary = {
+            "status": "complete", "actual_action_count": len(actions)
+        }
+        captured = {
+            "status": "TRAIN_NATIVE_DECISION_DATASET_READY",
+            "N_episodes": nat.ds.N_CASES,
+            "N_action_records": len(actions),
+        }
+        def data(path):
+            path = str(path)
+            if path.endswith("pilot_summary.json"):
+                return summary
+            if path.endswith("decision_report.json"):
+                return captured
+            raise AssertionError("Unexpected source report path: " + path)
+
+        with (
+            patch.object(nat.pilot, "verify_manifest", return_value=manifest),
+            patch.object(nat.ds.train, "validate_selection"),
+            patch.object(nat.pilot, "read_json", side_effect=data),
+            patch.object(nat.capture, "read_progress", return_value=progress),
+            patch.object(nat.physical, "validate_trace", side_effect=lambda x, _: x),
+            patch.object(nat.physical, "read_lines", return_value=actions),
+            patch.object(nat.pilot, "load_config", return_value=SimpleNamespace(
+                eval_settings={"max_steps_per_episode": 100})),
+        ):
+            _, _, actual, references = nat.native_ready(Path("/mock/new"))
+        self.assertEqual(set(actual), set(keys))
+        self.assertEqual(sum(len(r) for r in references.values()),
+                         nat.ds.N_CASES)
+
+
+
 class PerturbationTests(unittest.TestCase):
     def test_right_left_45_three_actual_habitat_yaws(self):
         self.assertEqual(pert.expected_yaw_actions(case(yaw=45)[
