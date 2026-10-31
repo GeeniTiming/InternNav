@@ -230,8 +230,20 @@ def read_run(root):
         raise ValueError("Unexpected diagnostic manifest")
     six_arm = Path(manifest["diagnosis"]["source_six_arm_run"]).resolve()
     checkpoint, annotation, old_protocol, case, row = source_check(six_arm)
-    if (manifest["episodes"] != [{"scene_id": case["scene_id"],
-                                   "episode_id": str(case["episode_id"])}]
+    # The checkpoint report's 'case' is a replay diagnostic. It has a
+    # normalized ['key'] but deliberately no raw scene_id/episode_id fields.
+    # Recover the exact raw episode identity from the immutable native
+    # checkpoint dataset instead of guessing fields from the diagnostic.
+    episodes = pilot.read_json(checkpoint / "episodes.json.gz")["episodes"]
+    matches = [ep for ep in episodes if capture.episode_key(ep) == TARGET]
+    if len(matches) != 1:
+        raise ValueError("The frozen checkpoint dataset must contain Episode13 exactly once")
+    expected_episodes = [{
+        "scene_id": matches[0]["scene_id"],
+        "episode_id": str(matches[0]["episode_id"]),
+    }]
+    if (tuple(case["key"]) != TARGET
+            or manifest["episodes"] != expected_episodes
             or Path(manifest["diagnosis"]["checkpoint_run"]).resolve() != checkpoint
             or Path(manifest["diagnosis"]["annotation_dir"]).resolve() != annotation):
         raise ValueError("Diagnosis source identity changed")
