@@ -338,6 +338,34 @@ def report(args):
                     or gate["prefix_trace_sha256"] !=
                        cohort.digest(references[key][:prefix])):
                 raise RuntimeError("Locked native action prefix digest mismatch")
+            # Explicit online-only input record; never include native
+            # final SR/NE, ground-truth pose or future actions here.
+            pilot.write_json(folder / "predecision_input.json", {
+                "schema": "intervention_selection_predecision.v0.1",
+                "context_id": case["case_id"] + "_natural",
+                "episode_key": list(key), "main_step": int(gate["step"]),
+                "source_type": "natural",
+                "instruction": now["episode_instruction"],
+                "past_action_codes": [
+                    int(r["action"]) for r in references[key][:prefix]
+                ],
+                "current_rgb": str(folder / "current_model_rgb.png"),
+                "current_pixel_sha256":
+                    ctx["current_model_rgb_pixel_sha256"],
+                "current_png_sha256":
+                    ctx["current_model_rgb_png_sha256"],
+                "historical_rgb": [
+                    {
+                        "path": str(folder / h["path"]),
+                        "native_history_index": h["native_history_index"],
+                        "pixel_sha256": h["pixel_sha256"],
+                        "png_sha256": h["png_sha256"],
+                    } for h in ctx["sampled_history"]
+                ],
+                "historical_rgb_history_sha256": gate["history_sha256"],
+                "perturbation_actions_before_context": [],
+                "no_privileged_simulator_metrics": True,
+            })
             status = "NATURAL_GATE_CAPTURED"
         else:
             if eligible or detail["status"] != "NOT_ELIGIBLE":
