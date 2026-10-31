@@ -724,6 +724,23 @@ def audit_arm(root, arm, protocol):
     return rows
 
 
+
+def audit_single(args):
+    root = Path(args.run_dir).resolve()
+    _, _, _, protocol = read_run(root)
+    rows = audit_arm(root, args.arm, protocol)
+    if len(rows) != len(protocol["selected_cases"]):
+        raise ValueError("Incomplete registered single-arm results")
+    result = {
+        "schema": SCHEMA, "status": "ONE_ARM_PAIRED_AUDITED",
+        "arm": args.arm, "N_audited_cases": len(rows),
+        "no_hindsight_labels": True,
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return result
+
+
+
 def report(args):
     root = Path(args.run_dir).resolve()
     natural_root, native_root, pert_root, protocol = read_run(root)
@@ -827,6 +844,10 @@ def main(argv=None):
     p.add_argument("--run-dir", required=True)
     p.add_argument("--arm", choices=ARMS, required=True)
     p.set_defaults(fn=run)
+    p = commands.add_parser("audit-arm", help="Audit one completed GPU arm before running another")
+    p.add_argument("--run-dir", required=True)
+    p.add_argument("--arm", choices=ARMS, required=True)
+    p.set_defaults(fn=audit_single)
     p = commands.add_parser("report")
     p.add_argument("--run-dir", required=True)
     p.set_defaults(fn=report)
