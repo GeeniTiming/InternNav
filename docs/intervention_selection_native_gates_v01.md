@@ -44,6 +44,12 @@ python scripts/eval/recovery_train_disjoint_acquire.py audit \
 
 Source `capture/decision_report.json` must have `TRAIN_NATIVE_DECISION_DATASET_READY` and 12 completed episodes. If it already exists and passes audit, **skip source GPU run**, not resume or overwrite it.
 
+## Native completion semantics (source readiness)
+
+The original DualVLN evaluator uses `while (not done) and (step_id <= max_steps_per_episode)`. Therefore a **completed**, audited source episode can end with `done=False` on its final actual Habitat action **if and only if** its saved progress has `steps == max_steps_per_episode+1`. The v0.1 `native_ready` check now verifies that exact budget-exhaustion case or ordinary `done=True`, and still requires full 12-episode completion, consistent actual action counts, and future full replay action/pose equivalence. Partial runs with `done=False` before the main-loop limit remain rejected.
+
+The GitHub fix for this readiness check is in the **existing branch**; no change to the old native source, locked preregistration, or original outcomes is needed. If a natural-gate `prepare` failed at this readiness check, it failed **before** creating the natural-gate output directory and can be retried after pulling. If a directory already exists, do not overwrite it.
+
 ## Stage B1: immutable natural gate capture
 
 ```bash
