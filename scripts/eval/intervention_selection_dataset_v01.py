@@ -85,7 +85,13 @@ def source_episodes(native_source, previously_inspected):
         old_scenes.update(train.scene_stems_from_locked_run(old))
     if len(set(prior_paths)) != len(prior_paths):
         raise ValueError("Repeated prior source run")
-    declared = set(manifest["train_scene_disjoint"]["excluded_scene_stems"])
+    selection = manifest["train_scene_disjoint"]
+    declared = set(selection["excluded_scene_stems"])
+    source_declared_prior = {
+        str(Path(x).resolve()) for x in selection["exclude_source_runs"]
+    }
+    if {str(x) for x in prior_paths} - source_declared_prior:
+        raise ValueError("Prior exclusion was not registered in native source manifest")
     if not old_scenes.issubset(declared):
         raise ValueError("Native source was not selected excluding the declared old scenes")
     if set(k[0] for k in keys) & old_scenes:
