@@ -460,8 +460,14 @@ def report(args):
     root = Path(args.run_dir).resolve()
     six_arm, checkpoint, case, baseline, protocol = read_run(root)
     original = capture.read_progress(checkpoint / "control/progress.json")[TARGET]
-    frozen = {a: baseline["outcomes"][label]
-              for a, label in OLD_MAP.items()}
+    # The source report indexes *condition labels*, while OLD_MAP stores
+    # actual existing arm directory names. Do not conflate the two.
+    reference_label = {
+        "replay_placebo_reset": "placebo_reset",
+        "replay_seek_keep": "seek_keep",
+    }
+    frozen = {a: baseline["outcomes"][reference_label[a]]
+              for a in OLD_MAP}
     source_actions = [
         r for r in physical.read_lines(checkpoint / "control/actions.jsonl")
         if capture.episode_key(r) == TARGET
