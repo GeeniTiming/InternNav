@@ -118,6 +118,7 @@ class SourceTests(unittest.TestCase):
         m["train_scene_disjoint"] = {
             "outcome_blind": True,
             "excluded_scene_stems": sorted(v.train.INSPECTED | {"old_scene"}),
+            "exclude_source_runs": [str(old)],
         }
         keys = [v.key_of(x) for x in m["episodes"]]
         with (
