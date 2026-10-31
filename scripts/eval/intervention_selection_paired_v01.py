@@ -59,6 +59,40 @@ def split_arm(arm):
     return m, operation
 
 
+
+def scan_action_codes(operation):
+    """Exact 45-degree outbound and return yaw action sequence."""
+    if operation not in SCAN_NAMES:
+        raise ValueError("Action has no physical SEEK scan")
+    outbound = 2 if operation == "SEEK_LEFT45" else 3
+    inbound = 3 if outbound == 2 else 2
+    return [outbound] * 3 + [inbound] * 3
+
+
+def assert_prearm_matches_keep(prearm, reference, expected_gate,
+                               expected_perturbation_actions):
+    """Compare the actual pre-arm observation against locked KEEP input.
+
+    Pose, RGB sensor and policy RNG are checked separately at runtime against
+    frozen KEEP, while this function proves exact online input provenance.
+    """
+    if (prearm.get("context_id") != reference.get("context_id")
+            or prearm.get("current_rgb_pixel_sha256") !=
+               reference.get("current_pixel_sha256")
+            or prearm.get("history_sha256") !=
+               expected_gate.get("history_sha256")
+            or prearm.get("history_sha256") !=
+               reference.get("historical_rgb_history_sha256")
+            or prearm.get("rng_sha256") != expected_gate.get("rng_sha256")
+            or prearm.get("perturbation_actions") !=
+               expected_perturbation_actions
+            or reference.get("perturbation_actions_before_context") !=
+               expected_perturbation_actions):
+        raise RuntimeError("NOT_COMPARABLE: pre-arm online RGB/history/provenance mismatch")
+    return True
+
+
+
 def eligible_sources(pert_root, max_cases):
     pert_root = Path(pert_root).resolve()
     natural_root, native_root, perturb_protocol = pert.read_run(pert_root)
@@ -264,6 +298,14 @@ class PairProbe(iso.MechanismProbe):
         self.first_reset_output = None
         self.prearm_rgb_digest = None
 
+    def begin(self, key):
+        # Each Episode starts fresh. In particular, RESET must record the
+        # first actual S2 output in *this* Episode, not the preceding one.
+        super().begin(key)
+        self.prearm = None
+        self.first_reset_output = None
+        self.prearm_rgb_digest = None
+
     def on_boundary(self, step, observations, done, history, action_seq,
                     pixel_goal, local_actions, action):
         ep = self.evaluator.env.get_current_episode()
@@ -371,6 +413,8 @@ class PairProbe(iso.MechanismProbe):
             "perturbation_actions": perturb_actions,
             "predecision_reference": reference["context_id"],
         }
+        assert_prearm_matches_keep(
+            self.prearm, reference, gate, expected_actions)
         self.prearm_rgb_digest = model_rgb_hash
         folder = self.directory / "checkpoints" / folder_id
         folder.mkdir(parents=True, exist_ok=False)
@@ -616,16 +660,11 @@ def audit_arm(root, arm, protocol):
             "predecision_input.json"
         )
         expected_input = pilot.read_json(expected_input_path)
-        if (prearm["current_rgb_pixel_sha256"] !=
-                expected_input["current_pixel_sha256"]
-                or prearm["history_sha256"] != gate["history_sha256"]
-                or prearm["rng_sha256"] != gate["rng_sha256"]
-                or prearm["context_id"] != expected_input["context_id"]):
-            raise RuntimeError("Pre-arm RGB/history/RNG mismatch with KEEP")
+        assert_prearm_matches_keep(
+            prearm, expected_input, gate, expected_alignment)
         external = [r for r in trace if r["phase"] == "external_recovery"]
         if operation in SCAN_NAMES:
-            direction = 2 if operation == "SEEK_LEFT45" else 3
-            seq = [direction] * 3 + [5-direction] * 3
+            seq = scan_action_codes(operation)
             if [r["action"] for r in external] != seq:
                 raise RuntimeError("Not the frozen 6-action SEEK scan")
             if (d["handoff"]["external_actions"] != 6
