@@ -182,10 +182,14 @@ def prepare(args):
         Path(physical.__file__).resolve(), Path(common.__file__).resolve(),
     ]
     for old_name in OLD_MAP.values():
+        folder = six_arm / old_name / "checkpoints" / "_".join(TARGET)
         watch.extend([
             six_arm / old_name / "turn_actions.jsonl",
             six_arm / old_name / "progress.json",
             six_arm / old_name / "turn_summary.json",
+            folder / "evidence_input.json",
+            folder / "history_inputs.json",
+            folder / "outward_view_model_rgb.png",
         ])
     manifest["source_hashes"].update({str(p): pilot.sha256(p) for p in watch})
     root.mkdir(parents=True, exist_ok=False)
@@ -528,8 +532,14 @@ def report(args):
             raise ValueError("Diagnostic input condition mislabeled")
         if arm == "virtual_placebo_reset" and (
                 inputs[0]["external_actions"] != 0
-                or inputs[0]["prompt"] != iso.EXTRA_PROMPT):
+                or inputs[0]["prompt"] != iso.EXTRA_PROMPT
+                or inputs[0]["source"] != "duplicate_current"):
             raise ValueError("Virtual placebo input is not matched")
+        if arm == "scan_no_injection_reset" and (
+                inputs[0]["source"] != "none"
+                or inputs[0]["prompt_suffix_added"] is not False
+                or inputs[0]["external_actions"] != iso.SCAN_ACTIONS):
+            raise ValueError("Scan-only input is not native")
         result = capture.read_progress(root / arm / "progress.json")
         if set(result) != {TARGET}:
             raise ValueError("New episode in single-context diagnostic")
@@ -537,6 +547,15 @@ def report(args):
         if not math.isfinite(float(val["ne"])):
             raise ValueError("Nonfinite final navigation error")
         if arm in OLD_MAP:
+            old_folder = (six_arm / OLD_MAP[arm] / "checkpoints"
+                          / "_".join(TARGET))
+            original_input = pilot.read_json(old_folder / "evidence_input.json")
+            if (len(original_input["events"]) != 1
+                    or inputs[0]["source"] != original_input["events"][0]["source"]
+                    or inputs[0]["image_pixel_sha256"] !=
+                       original_input["events"][0]["supplementary_pixel_sha256"]
+                    or inputs[0]["prompt"] != original_input["events"][0]["prompt"]):
+                raise ValueError("Logged replay injected a different RGB/prompt")
             reference = [
                 r for r in physical.read_lines(
                     six_arm / OLD_MAP[arm] / "turn_actions.jsonl")
