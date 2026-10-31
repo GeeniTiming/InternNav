@@ -259,6 +259,21 @@ class DecisionLogger:
             })
         return actual
 
+    def inject_extra_view(self, step, sources, images):
+        # The two reference replays preserve exactly the original injection,
+        # adding a separate audit event without modifying the model input.
+        before = self.inject_count
+        super().inject_extra_view(step, sources, images)
+        if self.inject_count == before + 1:
+            event = self.inject_events[-1]
+            self.injection_diagnostic.append({
+                "step": int(step), "injected": True,
+                "source": event["source"],
+                "image_pixel_sha256": event["supplementary_pixel_sha256"],
+                "prompt": event["prompt"],
+                "external_actions": self.external_actions,
+            })
+
     def record_system2_output(self, step, message):
         # Decoded native output, including down-look followup if the native
         # code generates one. Do not reinterpret text as task-state labels.
