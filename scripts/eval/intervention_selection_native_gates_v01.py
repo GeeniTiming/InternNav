@@ -62,6 +62,39 @@ def per_case_eligibility(case, step, limit, body_count, translation, done,
     }
 
 
+
+def native_episode_termination(key, rows, progress_row, native_limit):
+    """Validate the evaluator's TWO native termination conditions.
+
+    InternNav's native loop is:
+      while (not done) and (step_id <= max_steps_per_episode)
+    A final Habitat action may have done=False when the native main-loop
+    budget is exhausted. Its completed progress row then has steps=limit+1.
+    This does NOT waive trace/progress/runtime checks for incomplete episodes.
+    """
+    if not rows:
+        raise ValueError("Empty native action trace for " + repr(key))
+    if type(native_limit) is not int or native_limit < 1:
+        raise ValueError("Invalid native main-loop limit")
+    steps = progress_row.get("steps")
+    if type(steps) is not int or not 1 <= steps <= native_limit + 1:
+        raise ValueError(
+            "Invalid native completed main-step count for "
+            + repr(key) + ": " + repr(steps))
+    done = rows[-1].get("done")
+    if type(done) is not bool:
+        raise ValueError("Native final done flag is not boolean for " + repr(key))
+    if done:
+        return "ENV_DONE"
+    if steps == native_limit + 1:
+        return "NATIVE_LOOP_BUDGET_EXHAUSTED"
+    raise ValueError(
+        "Incomplete native episode: final done=False without step budget "
+        "exhaustion, key=" + repr(key) + ", steps=" + str(steps)
+        + ", limit=" + str(native_limit))
+
+
+
 def native_ready(source):
     source = Path(source).resolve()
     manifest = pilot.verify_manifest(source)
@@ -86,8 +119,18 @@ def native_ready(source):
         if key not in references:
             raise ValueError("Unexpected native action episode")
         references[key].append(row)
-    if any(not references[k] or not references[k][-1]["done"] for k in keys):
-        raise ValueError("Incomplete source native episode action trace")
+    # The native evaluator can complete through environment done OR the
+    # declared main-loop step limit, without a final Habitat done=True.
+    # Require an actual completed progress row at limit+1 in the latter case.
+    cfg = pilot.load_config(source / "control.py")
+    limit = int(cfg.eval_settings["max_steps_per_episode"])
+    for key in keys:
+        native_episode_termination(key, references[key], progress[key], limit)
+    if (int(summary["actual_action_count"]) !=
+            sum(len(references[k]) for k in keys)
+            or int(capture_report["N_action_records"]) !=
+               int(summary["actual_action_count"])):
+        raise ValueError("Native action count differs from completed source audits")
     return manifest, summary, progress, references
 
 
@@ -378,6 +421,10 @@ def report(args):
             "status": status, "natural_checkpoint": gate,
             "baseline_native_success": int(now["success"]),
             "baseline_final_ne_m": float(now["ne"]),
+            "native_termination": native_episode_termination(
+                key, references[key], original,
+                int(pilot.load_config(source / "control.py").
+                    eval_settings["max_steps_per_episode"])),
             "full_native_trace_verified": True,
         })
     n_eligible = sum(c["natural_checkpoint"] is not None for c in rows)
