@@ -102,36 +102,61 @@ class PerturbationTests(unittest.TestCase):
                     pert.expected_yaw_actions(c["perturbation_plan"])
 
     def test_ineligible_natural_gate_retained_not_replaced(self):
-        c0 = case(20, 45, ("scene0", "10"))
-        c1 = case(60, -45, ("scene1", "11"))
-        cases = [c0, c1]
+        # Production input_cases MUST retain all 12 preregistered cases.
+        # Only one gate is captured; the 11 unavailable cases stay recorded.
+        cases = [
+            case((20, 40, 60)[i // 4],
+                 45 if i % 4 < 2 else -45,
+                 (f"scene{i}", str(10 + i)))
+            for i in range(pert.ds.N_CASES)
+        ]
+        for i, c in enumerate(cases):
+            c["case_id"] = f"ep_{i:02d}"
+        eligible_case = cases[1]
         report = {
             "schema": nat.SCHEMA,
             "status": "NATURAL_GATES_AUDITED_WITH_INELIGIBLE",
             "cases": [
-                {"episode_key": c0["key"], "case_id": "ep_test",
-                 "natural_checkpoint": None,
-                 "status": "INELIGIBLE_RETAINED_NO_REPLACEMENT"},
-                {"episode_key": c1["key"], "case_id": "ep_test",
-                 "natural_checkpoint": {"step": 60},
-                 "status": "NATURAL_GATE_CAPTURED"},
+                {
+                    "episode_key": c["key"],
+                    "case_id": c["case_id"],
+                    "natural_checkpoint": (
+                        {"step": 20} if c is eligible_case else None
+                    ),
+                    "status": (
+                        "NATURAL_GATE_CAPTURED" if c is eligible_case else
+                        "INELIGIBLE_RETAINED_NO_REPLACEMENT"
+                    ),
+                }
+                for c in cases
             ],
         }
         old_root = Path("/frozen/natural")
+        checkpoint_path = (old_root / "control/checkpoints" /
+                           "_".join(eligible_case["key"]) / "checkpoint.json")
         saved = {
             str(old_root / "natural_checkpoint_report.json"): report,
-            str(old_root / "control/checkpoints/scene1_11/checkpoint.json"): {
-                "step": 60},
+            str(checkpoint_path): {"step": 20},
         }
         with (patch.object(pert.natural, "read_run", return_value=(
                 {}, Path("/frozen/native"), {"cases": cases},
                 {}, {}, {})),
               patch.object(pert.pilot, "read_json",
                            side_effect=lambda p: saved[str(p)])):
-            _, _, _, _, old, picked = pert.input_cases(old_root)
-        self.assertEqual(len(old["cases"]), 2)
-        self.assertEqual(len(picked), 1)
-        self.assertEqual(picked[0]["key"], c1["key"])
+            _, _, _, _, original, picked = pert.input_cases(old_root)
+            self.assertEqual(len(original["cases"]), pert.ds.N_CASES)
+            self.assertEqual(len(picked), 1)
+            self.assertEqual(picked[0]["key"], eligible_case["key"])
+            self.assertEqual(
+                sum(r["natural_checkpoint"] is None
+                    for r in original["cases"]), 11)
+            # An incomplete report must still be rejected, not silently
+            # accepted by weakening the production 12-case invariant.
+            saved[str(old_root / "natural_checkpoint_report.json")] = {
+                **report, "cases": report["cases"][:2]
+            }
+            with self.assertRaisesRegex(ValueError, "fully audited"):
+                pert.input_cases(old_root)
 
     def test_no_fake_post_perturb_rgb_in_cpu_protocol(self):
         self.assertIn("real", pert.SCOPE)
