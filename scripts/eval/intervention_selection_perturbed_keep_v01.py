@@ -155,6 +155,7 @@ def prepare(args):
         folder = natural_root / "control/checkpoints" / "_".join(c["key"])
         watched.extend([
             folder / "checkpoint.json", folder / "context_inputs.json",
+            folder / "predecision_input.json",
             folder / "current_model_rgb.png", folder / "rgb.png",
         ])
         ctx = pilot.read_json(folder / "context_inputs.json")
@@ -331,11 +332,24 @@ class PerturbedKeepProbe(turn.TurnProbe):
         original_dir = (Path(self.protocol["source_natural_gate_run"]) /
                         "control/checkpoints" / "_".join(key))
         history_desc = pilot.read_json(original_dir / "context_inputs.json")
+        native_input = pilot.read_json(original_dir / "predecision_input.json")
+        if (native_input["episode_key"] != list(key)
+                or native_input["main_step"] != int(step)
+                or native_input["historical_rgb_history_sha256"] !=
+                   gate["history_sha256"]
+                or len(native_input["past_action_codes"]) !=
+                   gate["prefix_action_count"]):
+            raise RuntimeError("Native predecision instruction/action prefix mismatch")
         pilot.write_json(folder / "predecision_input.json", {
             "schema": "intervention_selection_predecision.v0.1",
             "context_id": self.cases[key]["case_id"] + "_perturbed",
             "episode_key": list(key), "main_step": int(step),
             "source_type": "perturbed",
+            "instruction": native_input["instruction"],
+            "past_action_codes": (native_input["past_action_codes"] +
+                                  list(actions)),
+            "pre_perturbation_prefix_action_count":
+                gate["prefix_action_count"],
             "current_rgb": "post_perturb_current_model_rgb.png",
             "current_pixel_sha256": physical.history_hash([model_img]),
             "current_png_sha256": pilot.sha256(
@@ -489,8 +503,11 @@ def report(args):
                 or input_record["context_id"] != case["case_id"] + "_perturbed"
                 or pilot.sha256(image) != input_record["current_png_sha256"]
                 or input_record["perturbation_actions_before_context"] !=
-                   expected_actions):
-            raise RuntimeError("Perturbed current RGB not saved as true input")
+                   expected_actions
+                or input_record["past_action_codes"][-3:] != expected_actions
+                or input_record["pre_perturbation_prefix_action_count"] !=
+                   prefix):
+            raise RuntimeError("Perturbed current RGB/actions not saved as true input")
         from PIL import Image
         with Image.open(image) as img:
             if physical.history_hash([img.copy()]) != (
