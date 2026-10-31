@@ -1,5 +1,16 @@
 # v0.1 paired intervention selection — 2-case pilot and 10-case cohort
 
+**2026-10-31 audit-only compatibility fix:** completed GPU arms may have a previously valid frozen source manifest referencing the original `intervention_selection_paired_v01.py` script. An old `audit-arm` call could fail with `KeyError: 'checks'` because the source checkpoint includes extra eligibility metadata, while the runtime paired gate has nine core state fields. **Do not edit the original run root or rerun the already completed GPU arm.** Use the new `intervention_selection_paired_audit_v01.py` for `audit-arm` and `report`; it temporarily constrains the *one* problematic native-gate comparison to all nine explicitly verified core fields, while invoking the original complete audit for every other condition. The original runner stays byte-for-byte unchanged to preserve manifests. New audit code and tests are separate and are not used by RUN. 
+
+Run CPU-only compatibility tests first:
+
+~~~bash
+PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
+python -m unittest discover -s tests/unit_test \
+  -p 'test_intervention_selection_paired_audit_v01.py' -v
+~~~
+
+
 Each completed arm is immediately checked using the CPU-only audit-arm command; do not proceed to the next arm after a failed audit. The original pre-registered 12 TRAIN-scene episodes have 10 audited natural gates and 2 ineligible gates. Ten perturbed KEEP outcomes have been audited (7 successful, 3 failed). This stage preserves those source runs and runs three NEW actions per context: SEEK_LEFT45, SEEK_RIGHT45 and HISTORY_RESET. Natural and physically perturbed are distinct states; comparisons are made only *within* the same context.
 
 Each SEEK adds six real yaw actions and a genuine outward RGB image at the next System-2 decision; each HISTORY_RESET only filters sampled history indices, not the neural weights/cache. A perturbed arm always replays the same three predeclared real yaw actions and checks the exact original perturb KEEP's pose/RGB/history/RNG before taking its intervention. One run is one create-only arm across predeclared episodes.
@@ -40,12 +51,12 @@ do
     --run-dir "$PILOT" --arm "$arm" \
     2>&1 | tee "v01_first2_$arm.log" || break
   PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
-  python scripts/eval/intervention_selection_paired_v01.py audit-arm \
+  python scripts/eval/intervention_selection_paired_audit_v01.py audit-arm \
     --run-dir "$PILOT" --arm "$arm" || break
 done
 
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
-python scripts/eval/intervention_selection_paired_v01.py report \
+python scripts/eval/intervention_selection_paired_audit_v01.py report \
   --run-dir "$PILOT"
 ~~~
 
@@ -71,12 +82,12 @@ do
     --run-dir "$FULL" --arm "$arm" \
     2>&1 | tee "v01_all10_$arm.log" || break
   PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
-  python scripts/eval/intervention_selection_paired_v01.py audit-arm \
+  python scripts/eval/intervention_selection_paired_audit_v01.py audit-arm \
     --run-dir "$FULL" --arm "$arm" || break
 done
 
 PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' \
-python scripts/eval/intervention_selection_paired_v01.py report \
+python scripts/eval/intervention_selection_paired_audit_v01.py report \
   --run-dir "$FULL"
 ~~~
 
