@@ -162,6 +162,7 @@ def prepare(args):
         "original_cases": ds.N_CASES,
         "original_eligible_cases": len(inherited["cases"]),
         "selected_cases": selected,
+        "cases": selected,  # inherited TurnProbe requires protocol["cases"]
         "max_cases": args.max_cases,
         "mode": "PILOT_FIRST_TWO" if args.max_cases == 2 else "FULL_ELIGIBLE",
         "arms": list(ARMS),
@@ -267,6 +268,7 @@ def read_run(root):
         "original_cases": ds.N_CASES,
         "original_eligible_cases": len(inherited["cases"]),
         "selected_cases": selected,
+        "cases": selected,
         "max_cases": len(selected),
         "mode": "PILOT_FIRST_TWO" if len(selected)==2 else "FULL_ELIGIBLE",
         "arms": list(ARMS),
