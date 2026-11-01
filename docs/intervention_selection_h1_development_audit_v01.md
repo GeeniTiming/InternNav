@@ -30,11 +30,13 @@ correlated predecision contexts (natural and predeclared perturbed) per scene.
 verifies source manifest and outcome identities. Optionally pass
 `--label-dir` to rerun the original immutable offline label audit.
 
-The recently outcome-selected three scenes Episode 70 / 106 / 79 are **NOT**
-part of this original ten-scene H1 analysis and must NEVER be reported as an
-independent held-out success estimate. If any scene appears in multiple
-analysis datasets, scene-level independence must be rechecked before
-combining them.
+The recently outcome-selected three scenes Episode 70 / 106 / 79 were
+**selected from within these same original 10 scenes**. The ten-scene H1
+analysis DOES include their originally predeclared KEEP/RESET/SEEK outcomes,
+but EXCLUDES the additional posthoc PLACEBO / REAL_SEEK follow-up rollouts.
+The overlapping cases are ALREADY INSPECTED: this development analysis is not
+independent or confirmatory, and the posthoc results must never be
+double-counted as additional scenes or validation evidence.
 
 ## H1 descriptive outputs and their meaning
 
@@ -110,8 +112,9 @@ An unmet or mismatched schema is an error: do not silently drop a case.
 
 Proceed to a separate pre-registered confirmatory cohort ONLY if development
 data demonstrate meaningful nontrivial operation heterogeneity and plausible
-headroom beyond fixed rules. The outcome selected posthoc three-scene
-mechanism arm never enters that confirmatory denominator.
+headroom beyond fixed rules. The three posthoc-inspected scenes are part of the current development pool
+but must be excluded from any future previously-uninspected confirmatory scene
+denominator.
 
 Otherwise report a negative H1 engineering result instead of changing the
 topic, inventing new intervention arms, or presenting Oracle as an achieved
