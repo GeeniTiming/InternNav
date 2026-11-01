@@ -137,8 +137,14 @@ def summarize_stop_actions(rows, prefix_count):
         raise ValueError("Invalid prefix trace")
     result = []
     for i, row in enumerate(rows):
-        if (i >= prefix_count and row.get("phase") == "continuation"
-                and row["action"] == 0):
+        # Native KEEP control/actions.jsonl is untagged. Its post-gate
+        # actions are identifiable by the audited frozen prefix length.
+        # Intervened traces are phase-tagged; never count alignment yaws.
+        continuation = (
+            row.get("phase") == "continuation"
+            or (row.get("phase") is None and i >= prefix_count)
+        )
+        if i >= prefix_count and continuation and row["action"] == 0:
             result.append({
                 "episode_action_index": i,
                 "main_step": row.get("main_step"),
