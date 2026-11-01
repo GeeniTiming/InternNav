@@ -194,13 +194,10 @@ def focused_report_with_camera_audit(original_report):
         '    cont = [e for e in decisions[arm][key]\n'
         '            if e["phase"] == "continuation"]\n'
         '    if not cont or cont[0]["native_action_prefix_count"] != (\n'
-        '            gate["prefix_action_prefix_count"] + 3\n'
+        '            gate["prefix_action_count"] + 3\n'
         '            + (6 if arm != ARMS[0] else 0)):\n'
         '        raise ValueError("No first post-gate S2 call at exact action offset")\n'
     ).body[0]
-    # Correctly spell the frozen source key. Keeping this explicit makes
-    # drift detectable when comparing syntax trees below.
-    expected.body[1].test.comparators[0].left.value.value = "prefix_action_count"
     expected_dump = ast.dump(expected, include_attributes=False)
     matches = 0
 
