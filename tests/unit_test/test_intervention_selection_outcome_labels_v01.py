@@ -167,6 +167,7 @@ class LabelContractTests(unittest.TestCase):
                     for p in lab.SOURCE_FILES
                 },
                 "spl_tolerance": .02,
+                "N_scene_groups": 10,
                 "N_contexts": 20,
                 "N_effects_vs_keep": 60,
                 "N_pairwise_comparisons": 120,
