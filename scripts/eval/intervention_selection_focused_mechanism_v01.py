@@ -339,6 +339,179 @@ def run(args):
     return events
 
 
+
+def report(args):
+    """Require four complete, source-matched replays; never infer causal effects."""
+    root = Path(args.run_dir).resolve()
+    if (root / "focused_mechanism_report.json").exists():
+        raise FileExistsError("Final audit report is create-only")
+    natural, native, pert_root, protocol = read_run(root)
+    keys = [tuple(c["key"]) for c in protocol["cases"]]
+    original_keep = capture.read_progress(pert_root / pert.ARM / "progress.json")
+    original_tagged = physical.read_lines(
+        pert_root / pert.ARM / "turn_actions.jsonl")
+    old_actions = {
+        key: [x for x in original_tagged if capture.episode_key(x) == key]
+        for key in keys
+    }
+    summaries, diagnostics, tagged, outcomes, decisions = {}, {}, {}, {}, {}
+    for arm in ARMS:
+        directory = root / arm
+        summary = pilot.read_json(directory / "pilot_summary.json")
+        diag = pilot.read_json(directory / "turn_summary.json")
+        if (summary["status"] != "complete" or diag["status"] != "complete"):
+            raise ValueError("Incomplete GPU rollout: " + arm)
+        rows = physical.validate_trace(
+            physical.read_lines(directory / "turn_actions.jsonl"), arm)
+        plain = physical.validate_trace(
+            physical.read_lines(directory / "actions.jsonl"), arm + " native")
+        if not pilot.compare_traces(rows, plain)["actions_and_poses_match"]:
+            raise ValueError("Native and tagged action logs diverge: " + arm)
+        computed = s2.audit_events(
+            directory / "s2_call_events.jsonl",
+            directory / "turn_actions.jsonl", expected_arm=arm)
+        saved = pilot.read_json(directory / "s2_call_events_audit.json")
+        if any(saved.get(k) != value for k, value in computed.items()):
+            raise ValueError("Per-arm S2 audit changed since capture")
+        per_ep = {tuple(row["key"]): row for row in diag["cases"]}
+        progress = capture.read_progress(directory / "progress.json")
+        if set(per_ep) != set(keys) or set(progress) != set(keys):
+            raise ValueError("Missing focus episode from " + arm)
+        summaries[arm], diagnostics[arm] = summary, per_ep
+        tagged[arm] = {
+            key: [r for r in rows if capture.episode_key(r) == key]
+            for key in keys
+        }
+        outcomes[arm] = progress
+        events = physical.read_lines(directory / "s2_call_events.jsonl")
+        decisions[arm] = {
+            key: [e for e in events if e["event"] == "enter"
+                  and tuple(e["episode_key"]) == key]
+            for key in keys
+        }
+    cases = []
+    for case in protocol["cases"]:
+        key = tuple(case["key"])
+        gate = case["checkpoint"]
+        orig = original_keep[key]
+        keep = outcomes[ARMS[0]][key]
+        if (int(orig["success"]) != int(keep["success"])
+                or not math.isclose(float(orig["ne"]), float(keep["ne"]),
+                                    abs_tol=1e-5, rel_tol=1e-6)
+                or not pilot.compare_traces(
+                    old_actions[key], tagged[ARMS[0]][key])["actions_and_poses_match"]):
+            raise ValueError("Instrumented KEEP failed original complete replay: " + repr(key))
+        expected_pre = pilot.read_json(
+            pert_root / pert.ARM / "checkpoints" / "_".join(key) / "handoff.json")
+        observed_keep = diagnostics[ARMS[0]][key]["handoff"]
+        common.same_fields(
+            observed_keep, expected_pre, tuple(expected_pre),
+            "instrumented KEEP post-yaw context")
+        expected_actions = (
+            [2, 2, 2, 3, 3, 3] if case["focus_scan_side"] == "left"
+            else [3, 3, 3, 2, 2, 2]
+        )
+        external_scans, scan_evidence = [], {}
+        prearm_ref = None
+        for arm in ARMS[1:]:
+            detail = diagnostics[arm][key]
+            common.same_fields(detail["gate"], gate, tuple(gate),
+                               arm + " frozen S2 checkpoint")
+            pre = detail["prearm"]
+            if prearm_ref is None:
+                prearm_ref = pre
+            elif pre != prearm_ref:
+                raise ValueError("Three scan arms began at different pre-arm contexts")
+            if (pre["state"] != observed_keep["state"]
+                    or pre["observation_hashes"] !=
+                       observed_keep["final_observation_hashes"]
+                    or pre["history_sha256"] != gate["history_sha256"]
+                    or pre["rng_sha256"] != gate["rng_sha256"]):
+                raise ValueError("Scan arm differs from KEEP at pre-arm gate")
+            scan = [row for row in tagged[arm][key]
+                    if row["phase"] == "external_recovery"]
+            if [row["action"] for row in scan] != expected_actions:
+                raise ValueError("Unexpected 45-degree scan and return: " + arm)
+            if (int(detail["handoff"]["external_actions"]) != 6
+                    or detail["handoff"]["history_reset"] is not False
+                    or math.dist(detail["handoff"]["state"]["position"],
+                                 pre["state"]["position"]) > 1e-5
+                    or pose.heading_error(
+                        detail["handoff"]["state"]["orientation_wxyz"],
+                        pre["state"]["orientation_wxyz"]) > .05):
+                raise ValueError("Scan cost, return pose or history differs")
+            external_scans.append(scan)
+            img_file = root / arm / "checkpoints" / "_".join(key) / "evidence_input.json"
+            if arm == ARMS[1]:
+                if img_file.exists() or detail.get("injection_events"):
+                    raise ValueError("SCAN_NO_INJECTION unexpectedly injected an image")
+            else:
+                entry = pilot.read_json(img_file)
+                if (len(entry.get("events", [])) != 1
+                        or entry["events"][0]["source"] != (
+                            "duplicate_current" if arm == ARMS[2] else "outward_view")
+                        or entry["events"][0]["same_image_count"] is not True):
+                    raise ValueError("Wrong placebo/evidence view provenance")
+                scan_evidence[arm] = entry
+        if any(not pilot.compare_traces(
+                external_scans[0], other)["actions_and_poses_match"]
+               for other in external_scans[1:]):
+            raise ValueError("Physical scans differ among scan arms")
+        if (scan_evidence[ARMS[2]]["scan_view_sha256"] !=
+                scan_evidence[ARMS[3]]["scan_view_sha256"]
+                or scan_evidence[ARMS[2]]["post_return_current_sha256"] !=
+                   scan_evidence[ARMS[3]]["post_return_current_sha256"]):
+            raise ValueError("Real/placebo scan camera frames differ")
+        # Exact per-episode model input/output sequence before intervention.
+        def prefix_events(arm):
+            return [
+                (e["input_ids_sha256"], e["episode_call_id"],
+                 e["native_action_prefix_count"])
+                for e in decisions[arm][key] if e["phase"] == "prefix"
+            ]
+        baseline_calls = prefix_events(ARMS[0])
+        if not baseline_calls or any(prefix_events(arm) != baseline_calls
+                                     for arm in ARMS[1:]):
+            raise ValueError("S2 call anchors before checkpoint are not paired")
+        for arm in ARMS:
+            cont = [e for e in decisions[arm][key]
+                    if e["phase"] == "continuation"]
+            if not cont or cont[0]["native_action_prefix_count"] != (
+                    gate["prefix_action_count"] + 3
+                    + (6 if arm != ARMS[0] else 0)):
+                raise ValueError("No first post-gate S2 call at exact action offset")
+        scores = {
+            arm: {"success": int(outcomes[arm][key]["success"]),
+                  "ne_m": float(outcomes[arm][key]["ne"])}
+            for arm in ARMS
+        }
+        cases.append({
+            "episode_key": list(key), "focus_scan_side": case["focus_scan_side"],
+            "checkpoint_main_step": gate["step"],
+            "prearm_matches_original_KEEP": True,
+            "three_scan_arms_matched_in_pose_and_yaw": True,
+            "prefix_S2_inputs_and_action_offsets_matched": True,
+            "first_post_gate_S2_offsets_observed": True,
+            "outcomes_OFFLINE_ONLY": scores,
+        })
+    result = {
+        "schema": SCHEMA + ".report",
+        "status": "POSTHOC_THREE_SCENE_MATCHED_S2_CALLS_DESCRIPTIVE_NOT_CAUSAL",
+        "N_scene_groups": len(cases), "N_contexts": len(cases),
+        "N_actual_rollouts": len(cases) * len(ARMS),
+        "N_S2_call_aligned_prefixes": len(cases) * (len(ARMS) - 1),
+        "arms": list(ARMS), "posthoc_selection": True,
+        "not_estimated": [
+            "held_out_efficacy", "generalization", "learned_action_selector",
+            "causal_effect_of_task_relevance"
+        ],
+        "per_context": cases, "scope": SCOPE,
+    }
+    pilot.write_json(root / "focused_mechanism_report.json", result)
+    print("FOCUSED_MECHANISM_REPORT=PASS", len(cases), "scenes, 12 actual rollouts")
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return result
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -354,6 +527,9 @@ def main(argv=None):
     p.add_argument("--run-dir", required=True)
     p.add_argument("--arm", choices=ARMS, required=True)
     p.set_defaults(func=run)
+    p = sub.add_parser("report")
+    p.add_argument("--run-dir", required=True)
+    p.set_defaults(func=report)
     a = parser.parse_args(argv)
     a.func(a)
 
