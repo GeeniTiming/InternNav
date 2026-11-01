@@ -32,6 +32,7 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import recovery_intervention_choice_pilot as choice
 import recovery_train_checkpoint_evidence as evidence
+import intervention_selection_s2_call_events_v01 as s2_events
 
 iso, prior = choice.iso, choice.iso.prior
 pilot, physical, capture, common = iso.pilot, iso.physical, iso.capture, iso.common
@@ -292,14 +293,19 @@ def run(args):
             raise RuntimeError("Cache continuation forbidden")
         native_init(evaluator, cfg)
         probe = selected_probe(evaluator, root, args.arm, protocol, refs)
+        # New arms only: capture actual same-arm S2 call entry/exit offsets.
+        # Create-only per-arm log; never repair old data with reconstructed calls.
+        probe.s2_events = s2_events.ArmS2Events(
+            probe, root / args.arm / "s2_call_events.jsonl")
         probes.append(probe)
         evaluator._recovery_candidate = probe
         evaluator.env.step = probe.record
         probe.original_generate = evaluator.model.generate
+        traced_generate = probe.s2_events.wrap(probe.original_generate)
 
         def counted_generate(*a, **kw):
             probe.s2_calls += 1
-            return probe.original_generate(*a, **kw)
+            return traced_generate(*a, **kw)
         evaluator.model.generate = counted_generate
 
     cls.__init__ = initialize
@@ -324,6 +330,7 @@ def run(args):
         for probe in probes:
             probe.evaluator.env.step = probe.original_step
             probe.evaluator.model.generate = probe.original_generate
+            probe.s2_events.close()
             probe.close(error)
 
 
