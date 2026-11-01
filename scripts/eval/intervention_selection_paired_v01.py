@@ -26,7 +26,6 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import intervention_selection_perturbed_keep_v01 as pert
 import recovery_evidence_isolation as iso
-import intervention_selection_s2_call_events_v01 as s2_events
 
 natural, ds = pert.natural, pert.ds
 pilot, capture, physical, common, pose = (
@@ -554,18 +553,14 @@ def run(args):
         orig_init(evaluator, cfg)
         probe = PairProbe(
             evaluator, root, args.arm, protocol, references)
-        # Log actual per-arm S2 entry/exit with real action offsets.
-        probe.s2_events = s2_events.ArmS2Events(
-            probe, root / args.arm / "s2_call_events.jsonl")
         probes.append(probe)
         evaluator._recovery_candidate = probe
         evaluator.env.step = probe.record
         probe.original_generate = evaluator.model.generate
-        traced_generate = probe.s2_events.wrap(probe.original_generate)
 
         def counted(*aa, **kw):
             probe.s2_calls += 1
-            return traced_generate(*aa, **kw)
+            return probe.original_generate(*aa, **kw)
 
         evaluator.model.generate = counted
 
@@ -589,12 +584,7 @@ def run(args):
         for p in probes:
             p.evaluator.env.step = p.original_step
             p.evaluator.model.generate = p.original_generate
-            p.s2_events.close()
             p.close(error)
-    s2_result = s2_events.audit_events(
-        root / args.arm / "s2_call_events.jsonl",
-        root / args.arm / "turn_actions.jsonl", expected_arm=args.arm)
-    pilot.write_json(root / args.arm / "s2_call_events_audit.json", s2_result)
     print("V01_PAIR_ARM_RUN=COMPLETE", args.arm,
           "AUDIT_NOT_YET_COMPLETE", flush=True)
 
