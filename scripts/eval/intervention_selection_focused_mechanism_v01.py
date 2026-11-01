@@ -281,8 +281,12 @@ def run(args):
             raise RuntimeError("KEEP replay gate not audited; refuse scanned GPU arms")
         barrier = pilot.read_json(evidence)
         if (barrier.get("status") != "KEEP_FULL_REPLAY_VERIFIED_NEW_S2_EVENTS"
-                or barrier.get("N_verified_cases") != len(protocol["cases"])):
-            raise RuntimeError("Invalid KEEP replay gate")
+                or barrier.get("N_verified_cases") != len(protocol["cases"])
+                or barrier.get("replayed_action_sha256") != pilot.sha256(
+                    root / ARMS[0] / "turn_actions.jsonl")
+                or barrier.get("S2_call_events_sha256") != pilot.sha256(
+                    root / ARMS[0] / "s2_call_events.jsonl")):
+            raise RuntimeError("KEEP replay gate missing, changed or invalid")
     keys = {tuple(c["key"]) for c in protocol["cases"]}
     references = {k: [] for k in keys}
     for row in physical.read_lines(natural_root / "control/actions.jsonl"):
@@ -401,6 +405,8 @@ def audit_keep(args):
     saved = pilot.read_json(current_dir / "s2_call_events_audit.json")
     if any(saved.get(k) != v for k, v in result.items()):
         raise ValueError("KEEP S2 event audit drift")
+    if result["N_episodes"] != len(checked):
+        raise ValueError("KEEP per-call S2 events missing from a focus case")
     out = {"schema": SCHEMA + ".keep_gate",
            "status": "KEEP_FULL_REPLAY_VERIFIED_NEW_S2_EVENTS",
            "N_verified_cases": len(checked), "episode_keys": checked,
