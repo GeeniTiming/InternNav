@@ -229,10 +229,8 @@ class FocusScanProbe(paired.PairProbe):
         self.first_noinjection_output = None
 
     def on_boundary(self, *args):
-        was_at_gate = self.gate is None
         result = super().on_boundary(*args)
-        if (self.focus_role == ARMS[1] and was_at_gate
-                and self.gate is not None):
+        if self.focus_role == ARMS[1] and self.gate is not None:
             # Scan completes identically; the first subsequent query receives
             # NO additional image or prompt. Do not call the injection hook.
             self.inject_pending = False
