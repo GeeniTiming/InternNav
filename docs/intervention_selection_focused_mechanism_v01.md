@@ -38,12 +38,14 @@ The output directory is create-only. Missing focus checkpoints, source hash drif
 
 ## Step 3: GPU runs only after CPU passes
 
-First verify that a fresh KEEP really reproduces the historical action/pose trace:
+First run fresh KEEP, then execute the **mandatory CPU audit-keep barrier**.
+The other three GPU arms refuse to run unless the gate is present and valid:
 
     python scripts/eval/intervention_selection_focused_mechanism_v01.py run --run-dir "$OUT" --arm perturbed_keep
+    PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' python scripts/eval/intervention_selection_focused_mechanism_v01.py audit-keep --run-dir "$OUT"
 
-Retain a failed arm and its logs; do not delete and retry silently.
-After verifying KEEP, run the three intervention arms:
+The audit compares complete actions and poses, per-case success/NE, exact original post-perturbation handoff and newly recorded S2 call anchors. Retain a failed arm and its logs; do not delete and retry silently.
+After the KEEP gate passes, run the three intervention arms:
 
     for arm in perturbed_scan_no_injection perturbed_placebo perturbed_real_seek; do
       python scripts/eval/intervention_selection_focused_mechanism_v01.py run --run-dir "$OUT" --arm "$arm" || exit 1
