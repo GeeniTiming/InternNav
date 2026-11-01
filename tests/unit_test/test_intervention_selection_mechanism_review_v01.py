@@ -118,6 +118,18 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertFalse(summary["stop_intention_inferred"])
         self.assertFalse(summary["stop_success_causality_inferred"])
 
+    def test_untagged_native_keep_trace_counts_only_post_gate_stop(self):
+        trace = [
+            {"action": 0, "main_step": 10, "done": False},
+            {"action": 1, "main_step": 11, "done": False},
+            {"action": 0, "main_step": 20, "done": True},
+        ]
+        info = review.summarize_stop_actions(trace, prefix_count=2)
+        self.assertEqual(info["continuation_stop_action_count"], 1)
+        self.assertEqual(
+            info["first_continuation_stop_action"]["episode_action_index"], 2)
+        self.assertFalse(info["stop_intention_inferred"])
+
     def test_perturbed_keep_s2_remains_unknown(self):
         unknown = review.first_system2(
             None, ("scene", "8"), "KEEP", "perturbed")
