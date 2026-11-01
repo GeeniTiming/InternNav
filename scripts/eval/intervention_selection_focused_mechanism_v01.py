@@ -41,6 +41,35 @@ SCOPE = (
     "predeclared within-case scan direction. NOT training or held-out efficacy."
 )
 
+# CheckpointProbe stores additional preselection/eligibility audit metadata in
+# frozen checkpoints. PairProbe recreates precisely these nine runtime fields;
+# comparing dict keys from the frozen checkpoint is therefore invalid.
+REPLAY_GATE_FIELDS = (
+    "step", "prefix_action_count", "state", "observation_hashes",
+    "history_length", "history_sha256", "rng_sha256",
+    "parameters_sha256", "prefix_trace_sha256",
+)
+
+
+def verify_frozen_replay_gate(replayed, frozen, label):
+    """Compare actual replay state against the frozen checkpoint, fail closed.
+
+    Frozen selection-only fields (checks, eligible, prefix_translation_m,
+    remaining_native_main_steps, etc.) must be validated in their own schema,
+    not required to reappear in a replay-generated state record.
+    """
+    if not isinstance(replayed, dict) or set(replayed) != set(REPLAY_GATE_FIELDS):
+        raise ValueError("Unexpected runtime gate schema: " + label)
+    if not isinstance(frozen, dict) or any(
+            field not in frozen for field in REPLAY_GATE_FIELDS):
+        raise ValueError("Frozen gate missing required replay state: " + label)
+    checks = frozen.get("checks")
+    if (frozen.get("eligible") is not True or not isinstance(checks, dict)
+            or not checks or any(v is not True for v in checks.values())):
+        raise ValueError("Frozen gate was not eligible: " + label)
+    common.same_fields(replayed, frozen, REPLAY_GATE_FIELDS, label)
+    return True
+
 
 def select_cases(all_cases):
     indexed = {tuple(map(str, c["key"])): c for c in all_cases}
@@ -226,6 +255,7 @@ class FocusScanProbe(paired.PairProbe):
         if side not in ("left", "right"):
             raise ValueError("Unknown locked scan direction")
         self.arm = "lookback_" + side + "45_" + variant
+        self.operation = "SEEK_LEFT45" if side == "left" else "SEEK_RIGHT45"
         self.first_noinjection_output = None
 
     def on_boundary(self, *args):
@@ -495,8 +525,8 @@ def report(args):
         prearm_ref = None
         for arm in ARMS[1:]:
             detail = diagnostics[arm][key]
-            common.same_fields(detail["gate"], gate, tuple(gate),
-                               arm + " frozen S2 checkpoint")
+            verify_frozen_replay_gate(
+                detail["gate"], gate, arm + " frozen S2 checkpoint")
             pre = detail["prearm"]
             if prearm_ref is None:
                 prearm_ref = pre
