@@ -194,7 +194,8 @@ def analyze(expected, by_context, *, bootstrap_reps=BOOTSTRAPS, seed=SEED):
         "SEEK_combines_physical_scan_and_supplementary_RGB_no_placebo_control": True,
         "two_contexts_within_scene_are_correlated": True,
         "single_rollout_per_case_action_no_stochastic_repeats": True,
-        "excludes_posthoc_three_case_mechanism_followup": True,
+        "excludes_additional_posthoc_three_case_rollouts": True,
+        "posthoc_focus_scenes_overlap_original_ten": True,
         "not_a_preregistered_confirmatory_test": True,
         "overall": overall,
         "by_context_mode": by_mode,
@@ -204,7 +205,7 @@ def analyze(expected, by_context, *, bootstrap_reps=BOOTSTRAPS, seed=SEED):
             "Oracle-best-fixed gap is a descriptive upper bound, not deployable policy gain",
             "A positive development gap does not prove predictability from predecision data",
             "10 independent scenes are insufficient to conclude robust generalization",
-            "The three posthoc focused scenes are excluded from this original cohort analysis",
+            "Three posthoc-inspected scenes are contained in the original 10; only their extra posthoc arms are excluded",
             "Do not select a new confirmatory cohort or operation set based on individual outcomes",
         ],
     }
