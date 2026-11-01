@@ -11,6 +11,9 @@ No model/rollout, no changes to old output dirs, no rewriting manifests.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
+import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -66,20 +69,62 @@ def audited_comparator(original_same_fields):
     return guarded
 
 
+def pinned_focus_module(run_dir):
+    """Load the EXACT source version pinned by the original experiment.
+
+    The report-hotfix checkout can have a different historical revision:
+    using its local focused module would audit the wrong runner. Require the
+    on-disk original source SHA256 to match the experiment manifest first.
+    """
+    manifest_path = Path(run_dir).resolve() / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    records = manifest.get("source_hashes", {})
+    matches = [
+        (Path(path), digest) for path, digest in records.items()
+        if Path(path).name == "intervention_selection_focused_mechanism_v01.py"
+    ]
+    if len(matches) != 1:
+        raise ValueError("Require exactly one pinned focused source in manifest")
+    source, expected = matches[0]
+    if not source.is_absolute() or not source.is_file():
+        raise ValueError("Pinned focused source path missing")
+    observed = hashlib.sha256(source.read_bytes()).hexdigest()
+    if observed != expected:
+        raise RuntimeError(
+            "FROZEN_SOURCE_SHA_MISMATCH: " + str(source) +
+            " expected=" + expected + " actual=" + observed +
+            ". Restore an exact Git version with the separate recovery helper; "
+            "do NOT edit the manifest or skip checksum verification."
+        )
+    source_dir = str(source.parent)
+    if source_dir not in sys.path:
+        sys.path.insert(0, source_dir)
+    spec = importlib.util.spec_from_file_location(
+        "_v01_focused_source_exact_manifest", source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Cannot load pinned original report driver")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if tuple(module.ARMS) != tuple(focus.ARMS):
+        raise RuntimeError("Pinned original experiment arm vocabulary changed")
+    return module
+
+
 def report(run_dir):
     run_dir = Path(run_dir).resolve()
     output = run_dir / "focused_mechanism_report.json"
     if output.exists():
         raise FileExistsError(
             "Focused report already exists; never overwrite audited artifacts")
-    # The old source-hash checks are done by the ORIGINAL report/read_run;
-    # do not modify its script or patch its manifest.
-    original = focus.common.same_fields
-    focus.common.same_fields = audited_comparator(original)
+    # Ensure that we execute the original experiment's exact pinned report
+    # implementation, not the possibly different local hotfix checkout version.
+    pinned = pinned_focus_module(run_dir)
+    original = pinned.common.same_fields
+    pinned.common.same_fields = audited_comparator(original)
     try:
-        result = focus.report(SimpleNamespace(run_dir=str(run_dir)))
+        result = pinned.report(SimpleNamespace(run_dir=str(run_dir)))
     finally:
-        focus.common.same_fields = original
+        pinned.common.same_fields = original
     if result.get("N_actual_rollouts") != 12:
         raise ValueError("Focused report incomplete despite old report result")
     print("FOCUSED_REPORT_GATE_HOTFIX_V01=PASS")
