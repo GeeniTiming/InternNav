@@ -104,6 +104,8 @@ class H1CoreTests(unittest.TestCase):
         tampered = list(expected)
         cid, key, _ = tampered[0]
         tampered[0] = (cid, key, "perturbed")
+        for row in data[cid].values():
+            row["source_type"] = "perturbed"
         with self.assertRaisesRegex(ValueError, "pairing"):
             h1.analyze(tampered, data, bootstrap_reps=0)
 
