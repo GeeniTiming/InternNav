@@ -109,3 +109,47 @@ Then, still from the independent hotfix worktree:
 The hotfix now loads the original SHA256-verified experiment driver from the
 manifest source path, not the potentially different copy in its own worktree.
 Any subsequent hash or actual rollout inconsistency remains a fatal error.
+
+## 2026-11-01: correct four native camera actions before first continuation System-2
+
+The 12 real episode/arm continuations all show an observed first S2
+model.generate offset exactly FOUR actions after the original focused report
+hardcoded expectation. Each measured action stream contains exactly four
+`phase=continuation` env actions before the first S2 call.
+
+The frozen InternNav habitat evaluator performs these actions when starting an
+ordinary main-loop S2 decision:
+
+    LOOKDOWN (action code 5)
+    LOOKDOWN (action code 5)
+    LOOKUP   (action code 4)
+    LOOKUP   (action code 4)
+    model.generate(...)
+
+Thus the full strict first-call offset is:
+`checkpoint_prefix_action_count + 3 (real prior yaw) + 6 (only scanned arms)
++ 4 (real native camera env actions)`.
+
+This must NOT be implemented as a generic +4 tolerance. The report-only
+hotfix now matches exactly one known original AST assertion and replaces it
+with a check of exact recorded phase segments, native camera action codes,
+main-step number, first real model.generate entry offset and per-episode S2
+ordinal in all four arms. Every original gate/pose/RGB/RNG/history/source-SHA
+audit is retained. A changed assertion AST triggers an error; old source and
+data remain byte-for-byte untouched.
+
+CPU tests:
+
+    cd /home/geenitiming/InternNav-report-hotfix
+    git fetch origin
+    git switch --detach origin/exp/intervention-v01-focused-report-schema-fix
+    PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' python -m unittest discover -s tests/unit_test -p 'test_intervention_selection_focused_report_fix_v01.py' -v
+    python -m py_compile scripts/eval/intervention_selection_focused_report_fix_v01.py
+
+When tests pass and original source_matches_manifest remains true:
+
+    OUT=/mnt/data8t/geenitiming/internnav_data/intervention_v01_focus_mechanism_01
+    PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' python scripts/eval/intervention_selection_focused_report_fix_v01.py report --run-dir "$OUT"
+
+No GPU reruns are required for this reporting issue. If a different audit
+fails, do NOT change its gate without inspecting the actual source traces.
