@@ -24,6 +24,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import intervention_selection_native_gates_v01 as natural
+import intervention_selection_s2_call_events_v01 as s2_events
 import recovery_independent_turn as turn
 
 ds = natural.ds
@@ -396,14 +397,17 @@ def run(args):
             raise RuntimeError("KV continuation not allowed")
         original_init(evaluator, cfg)
         probe = PerturbedKeepProbe(evaluator, root, ARM, protocol, references)
+        probe.s2_events = s2_events.ArmS2Events(
+            probe, root / ARM / "s2_call_events.jsonl")
         probes.append(probe)
         evaluator._physical_recovery_probe = probe
         evaluator.env.step = probe.record
         probe.original_generate = evaluator.model.generate
+        traced_generate = probe.s2_events.wrap(probe.original_generate)
 
         def counted_generate(*aa, **kw):
             probe.s2_calls += 1
-            return probe.original_generate(*aa, **kw)
+            return traced_generate(*aa, **kw)
 
         evaluator.model.generate = counted_generate
 
@@ -427,7 +431,12 @@ def run(args):
         for p in probes:
             p.evaluator.env.step = p.original_step
             p.evaluator.model.generate = p.original_generate
+            p.s2_events.close()
             p.close(error)
+    s2_result = s2_events.audit_events(
+        root / ARM / "s2_call_events.jsonl",
+        root / ARM / "turn_actions.jsonl", expected_arm=ARM)
+    pilot.write_json(root / ARM / "s2_call_events_audit.json", s2_result)
     return report(args)
 
 
