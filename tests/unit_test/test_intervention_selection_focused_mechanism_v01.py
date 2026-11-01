@@ -113,5 +113,72 @@ class NoInjectionTests(unittest.TestCase):
                 inherited.assert_called_once()
 
 
+
+class FrozenGateRegressionTests(unittest.TestCase):
+    """Frozen source has eligibility audit fields; runtime gate does not."""
+
+    @staticmethod
+    def gate_pair():
+        replayed = {name: ("original-" + name)
+                    for name in f.REPLAY_GATE_FIELDS}
+        frozen = dict(replayed)
+        frozen.update({
+            "checks": {"threshold_reached": True, "idle_s2": True,
+                       "level_camera": True},
+            "eligible": True,
+            "remaining_native_main_steps": 65,
+            "key": ["scene", "7"],
+            "prefix_translation_m": 3.25,
+        })
+        return replayed, frozen
+
+    def test_frozen_extra_checks_do_not_cause_keyerror(self):
+        replayed, frozen = self.gate_pair()
+        self.assertTrue(f.verify_frozen_replay_gate(replayed, frozen, "test"))
+        self.assertNotIn("checks", replayed)
+
+    def test_replay_drift_still_fails(self):
+        replayed, frozen = self.gate_pair()
+        replayed["history_sha256"] = "changed!"
+        with self.assertRaisesRegex(RuntimeError, "history_sha256"):
+            f.verify_frozen_replay_gate(replayed, frozen, "test")
+
+    def test_ineligible_source_rejected(self):
+        replayed, frozen = self.gate_pair()
+        frozen["checks"]["idle_s2"] = False
+        with self.assertRaisesRegex(ValueError, "not eligible"):
+            f.verify_frozen_replay_gate(replayed, frozen, "test")
+        frozen["checks"]["idle_s2"] = True
+        frozen["eligible"] = False
+        with self.assertRaisesRegex(ValueError, "not eligible"):
+            f.verify_frozen_replay_gate(replayed, frozen, "test")
+
+    def test_missing_or_extra_runtime_fields_rejected(self):
+        replayed, frozen = self.gate_pair()
+        del replayed["rng_sha256"]
+        with self.assertRaisesRegex(ValueError, "runtime gate schema"):
+            f.verify_frozen_replay_gate(replayed, frozen, "test")
+        replayed, frozen = self.gate_pair()
+        replayed["checks"] = frozen["checks"]
+        with self.assertRaisesRegex(ValueError, "runtime gate schema"):
+            f.verify_frozen_replay_gate(replayed, frozen, "test")
+
+
+class PerCaseDirectionRegressionTests(unittest.TestCase):
+    def test_left_and_right_effective_operation(self):
+        for role in (f.ARMS[1], f.ARMS[2], f.ARMS[3]):
+            for scene, episode, side in f.FOCUS:
+                probe = object.__new__(f.FocusScanProbe)
+                probe.focus_role = role
+                probe.cases = {(scene, episode): {"focus_scan_side": side}}
+                with patch.object(f.paired.PairProbe, "begin", return_value=None):
+                    probe.begin((scene, episode))
+                self.assertEqual(probe.operation,
+                                 "SEEK_LEFT45" if side == "left"
+                                 else "SEEK_RIGHT45")
+                view = "placebo" if role == f.ARMS[2] else "evidence"
+                self.assertEqual(probe.arm, f"lookback_{side}45_{view}")
+
+
 if __name__ == "__main__":
     unittest.main()
