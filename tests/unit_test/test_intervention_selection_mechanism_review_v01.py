@@ -69,7 +69,9 @@ class EvidenceContractTests(unittest.TestCase):
             self.assertEqual(len(got["historical_rgb"]), 1)
             self.assertEqual(got["past_action_codes"][-3:], [2, 2, 2])
             self.assertNotIn("success", got)
-            self.assertIsNone(got["mechanism_annotation"])
+            self.assertNotIn("mechanism_annotation", got)
+            self.assertNotIn("purpose_POSTHOC_ONLY", got)
+            self.assertNotIn("selected_after_outcomes_observed", got)
             bad = copy.deepcopy(row)
             bad["current_png_sha256"] = "tampered"
             with self.assertRaisesRegex(ValueError, "provenance"):
