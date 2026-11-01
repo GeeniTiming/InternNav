@@ -83,8 +83,9 @@ class OutputSafetyTests(unittest.TestCase):
     def test_report_uses_existing_driver_and_restores_comparator(self):
         with TemporaryDirectory() as temp:
             original = fix.focus.common.same_fields
-            with patch.object(fix.focus, "report", return_value={
-                    "N_actual_rollouts": 12}) as mocked:
+            with (patch.object(fix, "pinned_focus_module", return_value=fix.focus),
+                  patch.object(fix.focus, "report", return_value={
+                      "N_actual_rollouts": 12}) as mocked):
                 result = fix.report(temp)
             self.assertEqual(result["N_actual_rollouts"], 12)
             self.assertIs(fix.focus.common.same_fields, original)
@@ -93,7 +94,9 @@ class OutputSafetyTests(unittest.TestCase):
     def test_report_restores_comparator_on_failure(self):
         with TemporaryDirectory() as temp:
             original = fix.focus.common.same_fields
-            with patch.object(fix.focus, "report", side_effect=RuntimeError("replay mismatch")):
+            with (patch.object(fix, "pinned_focus_module", return_value=fix.focus),
+                  patch.object(fix.focus, "report",
+                               side_effect=RuntimeError("replay mismatch"))):
                 with self.assertRaisesRegex(RuntimeError, "replay mismatch"):
                     fix.report(temp)
             self.assertIs(fix.focus.common.same_fields, original)
@@ -103,6 +106,36 @@ class OutputSafetyTests(unittest.TestCase):
             (Path(temp) / "focused_mechanism_report.json").write_text("{}")
             with self.assertRaises(FileExistsError):
                 fix.report(temp)
+
+    def test_pinned_loader_rejects_changed_source_sha(self):
+        import hashlib
+        import json
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            src = root / "intervention_selection_focused_mechanism_v01.py"
+            src.write_text("ARMS = ()\n", encoding="utf-8")
+            (root / "manifest.json").write_text(json.dumps({
+                "source_hashes": {str(src): hashlib.sha256(b"different").hexdigest()}
+            }))
+            with self.assertRaisesRegex(RuntimeError, "FROZEN_SOURCE_SHA_MISMATCH"):
+                fix.pinned_focus_module(root)
+
+    def test_pinned_loader_reads_exact_manifest_source(self):
+        import hashlib
+        import json
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            src = root / "intervention_selection_focused_mechanism_v01.py"
+            source = "ARMS = " + repr(fix.focus.ARMS) + "\n"
+            src.write_text(source, encoding="utf-8")
+            (root / "manifest.json").write_text(json.dumps({
+                "source_hashes": {
+                    str(src): hashlib.sha256(src.read_bytes()).hexdigest()
+                }
+            }))
+            loaded = fix.pinned_focus_module(root)
+            self.assertEqual(tuple(loaded.ARMS), tuple(fix.focus.ARMS))
+            self.assertEqual(Path(loaded.__file__).resolve(), src.resolve())
 
 
 if __name__ == "__main__":
