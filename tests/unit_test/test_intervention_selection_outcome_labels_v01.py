@@ -175,8 +175,10 @@ class LabelContractTests(unittest.TestCase):
                 "context_type_counts": {"KEEP_SUCCEEDS": 15},
             }
             data = {p: (p + "\n").encode() for p in lab.OUTPUT_FILES}
-            with patch.object(lab, "make_label_package",
-                              return_value=(package, data)):
+            with patch.object(
+                lab, "make_label_package",
+                side_effect=lambda *_: (copy.deepcopy(package), dict(data))
+            ):
                 written = lab.write_package(source, output, .02)
                 lab.audit_package(output)
                 self.assertEqual(written["N_contexts"], 20)
