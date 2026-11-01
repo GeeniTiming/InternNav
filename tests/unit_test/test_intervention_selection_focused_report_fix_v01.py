@@ -222,6 +222,11 @@ class NativeCameraBoundaryTests(unittest.TestCase):
         patched = fix.focused_report_with_camera_audit(frozen_report)
         self.assertEqual(patched.__name__, "frozen_report")
 
+    def test_ast_matches_checked_in_original_focused_report(self):
+        # Check the real frozen report structure, not just a mini fixture.
+        patched = fix.focused_report_with_camera_audit(fix.focus.report)
+        self.assertEqual(patched.__name__, "report")
+
     def test_ast_rejects_source_drift(self):
         def changed_report(args):
             for arm in ARMS:
