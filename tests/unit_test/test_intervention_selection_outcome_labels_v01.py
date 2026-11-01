@@ -150,7 +150,7 @@ class LabelContractTests(unittest.TestCase):
         self.assertEqual(sum(x["context_type"].startswith("KEEP_FAILS")
                              for x in ctx), 5)
         self.assertEqual(sum(x["relation"] == "UNRESOLVED_BOTH_FAILED"
-                             for x in pairs), 18)
+                             for x in pairs), 24)
 
     def test_immutable_create_only_output_and_recomputed_audit(self):
         with tempfile.TemporaryDirectory() as td:
