@@ -120,7 +120,6 @@ def validate_predecision(row, folder, expected_key, expected_mode):
         "historical_rgb": history,
         "historical_rgb_history_sha256":
             row["historical_rgb_history_sha256"],
-        "mechanism_annotation": None,
         "no_offline_outcome_fields_in_this_record": True,
         "online_legal_evidence_only": True,
     }
@@ -313,8 +312,8 @@ def build_packet(label_dir):
             ctx = validate_predecision(online[cid], folder, key, mode)
             if ctx["context_id"] != cid or ctx["main_step"] != gate["step"]:
                 raise ValueError("Context does not match original natural checkpoint")
-            ctx["purpose_POSTHOC_ONLY"] = purpose
-            ctx["selected_after_outcomes_observed"] = True
+            # Keep this table strictly online-legal. Posthoc selection
+            # purpose belongs ONLY in separate annotation/report files.
             context_records.append(ctx)
             photos.append(ctx["current_rgb"])
             photos.extend(ctx["historical_rgb"])
