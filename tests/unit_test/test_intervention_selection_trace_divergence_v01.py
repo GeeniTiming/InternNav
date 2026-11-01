@@ -50,7 +50,7 @@ class SegmentationTests(unittest.TestCase):
         prefix = [row(1, "prefix"), row(1, "prefix")]
         wrong = prefix + [row(2, "external_recovery")] * 6 + [
             row(0, "continuation")]
-        with self.assertRaisesRegex(ValueError, "physical scan"):
+        with self.assertRaisesRegex(ValueError, "scan did not follow"):
             d.phase_segments(wrong, 2, "natural", "SEEK_RIGHT45")
         wrong = (prefix + [row(0, "continuation")]
                  + [row(3, "external_recovery")] * 6)
