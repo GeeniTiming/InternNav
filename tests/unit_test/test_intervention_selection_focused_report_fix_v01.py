@@ -84,6 +84,8 @@ class OutputSafetyTests(unittest.TestCase):
         with TemporaryDirectory() as temp:
             original = fix.focus.common.same_fields
             with (patch.object(fix, "pinned_focus_module", return_value=fix.focus),
+                  patch.object(fix, "focused_report_with_camera_audit",
+                               side_effect=lambda original: original),
                   patch.object(fix.focus, "report", return_value={
                       "N_actual_rollouts": 12}) as mocked):
                 result = fix.report(temp)
@@ -95,6 +97,8 @@ class OutputSafetyTests(unittest.TestCase):
         with TemporaryDirectory() as temp:
             original = fix.focus.common.same_fields
             with (patch.object(fix, "pinned_focus_module", return_value=fix.focus),
+                  patch.object(fix, "focused_report_with_camera_audit",
+                               side_effect=lambda original: original),
                   patch.object(fix.focus, "report",
                                side_effect=RuntimeError("replay mismatch"))):
                 with self.assertRaisesRegex(RuntimeError, "replay mismatch"):
@@ -136,6 +140,96 @@ class OutputSafetyTests(unittest.TestCase):
             loaded = fix.pinned_focus_module(root)
             self.assertEqual(tuple(loaded.ARMS), tuple(fix.focus.ARMS))
             self.assertEqual(Path(loaded.__file__).resolve(), src.resolve())
+
+
+
+class NativeCameraBoundaryTests(unittest.TestCase):
+    def setup_input(self):
+        key = ("scene", "70")
+        gate = {"step": 40, "prefix_action_count": 12}
+        tagged, decisions = {}, {}
+        for arm in fix.focus.ARMS:
+            count = 0 if arm == fix.focus.ARMS[0] else 6
+            phases = (["prefix"] * 12
+                      + ["alignment"] * 3
+                      + ["external_recovery"] * count
+                      + ["continuation"] * 4)
+            actions = [
+                {"phase": phase, "action": (
+                    [5, 5, 4, 4][i-(len(phases)-4)]
+                    if i >= len(phases)-4 else 2),
+                 "main_step": 40} for i, phase in enumerate(phases)
+            ]
+            tagged[arm] = {key: actions}
+            decisions[arm] = {key: [
+                {"phase": "continuation",
+                 "main_step": 40,
+                 "episode_call_id": 6,
+                 "native_action_prefix_count": len(phases)}
+            ]}
+        return key, gate, tagged, decisions
+
+    def test_exact_real_camera_steps_accepted(self):
+        key, gate, tagged, decisions = self.setup_input()
+        self.assertTrue(fix.verify_first_post_gate_s2(
+            key, gate, tagged, decisions, fix.focus.ARMS))
+
+    def test_extra_non_camera_action_fails(self):
+        key, gate, tagged, decisions = self.setup_input()
+        tagged[fix.focus.ARMS[1]][key][-4]["action"] = 1
+        with self.assertRaisesRegex(ValueError, "camera"):
+            fix.verify_first_post_gate_s2(
+                key, gate, tagged, decisions, fix.focus.ARMS)
+
+    def test_different_first_s2_offset_fails(self):
+        key, gate, tagged, decisions = self.setup_input()
+        decisions[fix.focus.ARMS[2]][key][0]["native_action_prefix_count"] -= 1
+        with self.assertRaisesRegex(ValueError, "exact native camera"):
+            fix.verify_first_post_gate_s2(
+                key, gate, tagged, decisions, fix.focus.ARMS)
+
+    def test_wrong_camera_main_step_fails(self):
+        key, gate, tagged, decisions = self.setup_input()
+        tagged[fix.focus.ARMS[0]][key][-2]["main_step"] = 41
+        with self.assertRaisesRegex(ValueError, "camera"):
+            fix.verify_first_post_gate_s2(
+                key, gate, tagged, decisions, fix.focus.ARMS)
+
+    def test_missing_scan_action_fails(self):
+        key, gate, tagged, decisions = self.setup_input()
+        tagged[fix.focus.ARMS[3]][key][16]["phase"] = "continuation"
+        with self.assertRaisesRegex(ValueError, "phase"):
+            fix.verify_first_post_gate_s2(
+                key, gate, tagged, decisions, fix.focus.ARMS)
+
+    def test_first_s2_episode_call_ordinal_must_match(self):
+        key, gate, tagged, decisions = self.setup_input()
+        decisions[fix.focus.ARMS[2]][key][0]["episode_call_id"] = 7
+        with self.assertRaisesRegex(ValueError, "ordinal"):
+            fix.verify_first_post_gate_s2(
+                key, gate, tagged, decisions, fix.focus.ARMS)
+
+    def test_ast_frozen_report_is_matched_exactly(self):
+        def frozen_report(args):
+            for arm in ARMS:
+                cont = [e for e in decisions[arm][key]
+                        if e["phase"] == "continuation"]
+                if not cont or cont[0]["native_action_prefix_count"] != (
+                        gate["prefix_action_count"] + 3
+                        + (6 if arm != ARMS[0] else 0)):
+                    raise ValueError("No first post-gate S2 call at exact action offset")
+            return True
+        patched = fix.focused_report_with_camera_audit(frozen_report)
+        self.assertEqual(patched.__name__, "frozen_report")
+
+    def test_ast_rejects_source_drift(self):
+        def changed_report(args):
+            for arm in ARMS:
+                if bad:
+                    raise ValueError("No first post-gate S2 call at exact action offset")
+            return True
+        with self.assertRaisesRegex(RuntimeError, "assertion shape"):
+            fix.focused_report_with_camera_audit(changed_report)
 
 
 if __name__ == "__main__":
