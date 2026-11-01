@@ -99,6 +99,10 @@ def _replay(args, *, paired_arm):
 
     result = s2.audit_events(root / arm / "s2_call_events.jsonl",
                              root / arm / "turn_actions.jsonl",expected_arm=arm)
+    result["capture_entrypoint_sha256"] = pilot.sha256(Path(__file__).resolve())
+    result["frozen_protocol_manifest_sha256"] = pilot.sha256(root / "manifest.json")
+    result["frozen_driver_sha256"] = pilot.sha256(
+        Path(paired.__file__).resolve() if paired_arm else Path(pert.__file__).resolve())
     audit_file = root / arm / "s2_call_events_audit.json"
     if audit_file.exists():
         raise FileExistsError("New replay event audit is create-only")
