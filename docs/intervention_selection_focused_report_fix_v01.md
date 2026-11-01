@@ -69,3 +69,43 @@ report-only schema check failed.
 
 This experiment was selected posthoc and its report is descriptive, not
 held-out causal evidence.
+
+## New: restore exact frozen source after a later Git update
+
+A report cannot run if the ORIGINAL source path recorded in manifest was
+changed after the 12 GPU rollouts. A separate Git worktree alone does not
+repair this: the original manifest still hashes
+/home/geenitiming/InternNav/scripts/eval/intervention_selection_focused_mechanism_v01.py.
+The new hotfix report loads that EXACT source after SHA256 verification;
+it cannot safely substitute an older branch version.
+
+The read-only inspector compares the run's expected source SHA256 with the
+current original source and three known historical Git versions:
+
+    OUT=/mnt/data8t/geenitiming/internnav_data/intervention_v01_focus_mechanism_01
+    python scripts/eval/intervention_selection_frozen_source_restore_v01.py inspect --run-dir "$OUT"
+
+If source_matches_manifest is false but matching_git_revisions is non-empty,
+explicitly restore the exact matching historical bytes (not an approximate
+similar version). This operation backs up the CURRENT original file into a
+non-overwriting sidecar .bak file in its directory and replaces only that
+single original script. No manifest edits, no model runs, no dataset changes:
+
+    python scripts/eval/intervention_selection_frozen_source_restore_v01.py restore --run-dir "$OUT"
+
+If NO_EXACT_GIT_MATCH occurs, STOP. The source may have contained uncommitted
+changes at prepare. Recover the exact bytes from snapshots before proceeding;
+never fabricate the hash or disable pilot.verify_manifest.
+
+Run 11 CPU report regression tests plus 6 source recovery regression tests:
+
+    PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' python -m unittest discover -s tests/unit_test -p 'test_intervention_selection_focused_report_fix_v01.py' -v
+    PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' python -m unittest discover -s tests/unit_test -p 'test_intervention_selection_frozen_source_restore_v01.py' -v
+
+Then, still from the independent hotfix worktree:
+
+    PYTHONPATH="$PWD" USE_TF=0 CUDA_VISIBLE_DEVICES='' python scripts/eval/intervention_selection_focused_report_fix_v01.py report --run-dir "$OUT"
+
+The hotfix now loads the original SHA256-verified experiment driver from the
+manifest source path, not the potentially different copy in its own worktree.
+Any subsequent hash or actual rollout inconsistency remains a fatal error.
