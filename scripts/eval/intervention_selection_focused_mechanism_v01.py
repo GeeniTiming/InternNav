@@ -271,8 +271,18 @@ def run(args):
     root = Path(args.run_dir).resolve()
     natural_root, source, pert_root, protocol = read_run(root)
     arm = args.arm
-    if arm not in ARMS or (root / arm).exists():
-        raise FileExistsError("Invalid or already-created arm: " + str(arm))
+    if arm not in ARMS:
+        raise ValueError("Unknown focus arm: " + str(arm))
+    if (root / arm).exists():
+        raise FileExistsError("Arm is create-only: " + str(arm))
+    if arm != ARMS[0]:
+        evidence = root / "keep_replay_gate.json"
+        if not evidence.is_file():
+            raise RuntimeError("KEEP replay gate not audited; refuse scanned GPU arms")
+        barrier = pilot.read_json(evidence)
+        if (barrier.get("status") != "KEEP_FULL_REPLAY_VERIFIED_NEW_S2_EVENTS"
+                or barrier.get("N_verified_cases") != len(protocol["cases"])):
+            raise RuntimeError("Invalid KEEP replay gate")
     keys = {tuple(c["key"]) for c in protocol["cases"]}
     references = {k: [] for k in keys}
     for row in physical.read_lines(natural_root / "control/actions.jsonl"):
@@ -339,6 +349,70 @@ def run(args):
     return events
 
 
+
+
+def audit_keep(args):
+    """CPU barrier: no further GPU arms until exact historical KEEP replay."""
+    root = Path(args.run_dir).resolve()
+    _, _, pert_root, protocol = read_run(root)
+    outfile = root / "keep_replay_gate.json"
+    if outfile.exists():
+        raise FileExistsError("KEEP replay gate is create-only")
+    arm = ARMS[0]
+    current_dir = root / arm
+    summary = pilot.read_json(current_dir / "pilot_summary.json")
+    diag = pilot.read_json(current_dir / "turn_summary.json")
+    if summary["status"] != "complete" or diag["status"] != "complete":
+        raise ValueError("New instrumented KEEP not complete")
+    source_summary = pilot.read_json(pert_root / pert.ARM / "pilot_summary.json")
+    if source_summary["status"] != "complete":
+        raise ValueError("Frozen original KEEP incomplete")
+    new_trace = physical.validate_trace(
+        physical.read_lines(current_dir / "turn_actions.jsonl"), "new KEEP")
+    old_trace = physical.validate_trace(
+        physical.read_lines(pert_root / pert.ARM / "turn_actions.jsonl"),
+        "original KEEP")
+    new_prog = capture.read_progress(current_dir / "progress.json")
+    old_prog = capture.read_progress(pert_root / pert.ARM / "progress.json")
+    detail = {tuple(row["key"]): row for row in diag["cases"]}
+    checked = []
+    for case in protocol["cases"]:
+        key = tuple(case["key"])
+        subset = lambda trace: [
+            row for row in trace if capture.episode_key(row) == key]
+        if not pilot.compare_traces(
+                subset(new_trace), subset(old_trace))["actions_and_poses_match"]:
+            raise ValueError("KEEP full action/pose replay diverged: " + repr(key))
+        a, b = new_prog[key], old_prog[key]
+        if (int(a["success"]) != int(b["success"])
+                or a["episode_instruction"] != b["episode_instruction"]
+                or not math.isclose(float(a["ne"]), float(b["ne"]),
+                                    abs_tol=1e-5, rel_tol=1e-6)):
+            raise ValueError("KEEP original outcome changed: " + repr(key))
+        original = pilot.read_json(
+            pert_root / pert.ARM / "checkpoints" / "_".join(key)
+            / "handoff.json")
+        common.same_fields(
+            detail[key]["handoff"], original, tuple(original), "KEEP gate")
+        checked.append(list(key))
+    result = s2.audit_events(
+        current_dir / "s2_call_events.jsonl",
+        current_dir / "turn_actions.jsonl", expected_arm=arm)
+    saved = pilot.read_json(current_dir / "s2_call_events_audit.json")
+    if any(saved.get(k) != v for k, v in result.items()):
+        raise ValueError("KEEP S2 event audit drift")
+    out = {"schema": SCHEMA + ".keep_gate",
+           "status": "KEEP_FULL_REPLAY_VERIFIED_NEW_S2_EVENTS",
+           "N_verified_cases": len(checked), "episode_keys": checked,
+           "original_action_sha256": pilot.sha256(
+               pert_root / pert.ARM / "turn_actions.jsonl"),
+           "replayed_action_sha256": pilot.sha256(
+               current_dir / "turn_actions.jsonl"),
+           "S2_call_events_sha256": pilot.sha256(
+               current_dir / "s2_call_events.jsonl")}
+    pilot.write_json(outfile, out)
+    print("FOCUSED_KEEP_GATE=PASS", len(checked), "historical case replays")
+    return out
 
 def report(args):
     """Require four complete, source-matched replays; never infer causal effects."""
@@ -527,6 +601,9 @@ def main(argv=None):
     p.add_argument("--run-dir", required=True)
     p.add_argument("--arm", choices=ARMS, required=True)
     p.set_defaults(func=run)
+    p = sub.add_parser("audit-keep")
+    p.add_argument("--run-dir", required=True)
+    p.set_defaults(func=audit_keep)
     p = sub.add_parser("report")
     p.add_argument("--run-dir", required=True)
     p.set_defaults(func=report)
