@@ -71,19 +71,89 @@ def read_jsonl(path):
                     raise ValueError(f'{path}:{no}: invalid JSON') from exc
 
 
+def record_key(row, field):
+    if field == 'scene_id':
+        return canonical_key(row['scene_id'], row['episode_id'])
+    if field == 'episode_key':
+        return canonical_key(*row['episode_key'])
+    if field == 'key':
+        return canonical_key(*row['key'])
+    raise ValueError('Unsupported identity field')
+
+
 def collect_by_episode(path, field='scene_id'):
     out = defaultdict(list)
     for row in read_jsonl(path):
-        if field == 'scene_id':
-            k = canonical_key(row['scene_id'], row['episode_id'])
-        elif field == 'episode_key':
-            k = canonical_key(*row['episode_key'])
-        elif field == 'key':
-            k = canonical_key(*row['key'])
-        else:
-            raise ValueError('Unsupported identity field')
-        out[k].append(row)
+        out[record_key(row, field)].append(row)
     return dict(out)
+
+
+def group_ordered_action_rows(rows):
+    """Group the global action log and record each episode's global start offset.
+
+    Native DecisionRecorder.native_action_prefix_count is GLOBAL across the
+    whole evaluator run (DecisionRecorder.action_count is initialized once and
+    incremented by every env.step). BoundaryProbe.prefix_action_count, in
+    contrast, is reset per episode. Preserve the source action-log order so
+    global S2 prefixes can be mapped without guessing.
+    """
+    grouped = defaultdict(list)
+    order = []
+    closed = set()
+    previous = None
+    for row in rows:
+        key = canonical_key(row['scene_id'], row['episode_id'])
+        if key != previous:
+            if key in closed:
+                raise ValueError(
+                    'Native action trace episode rows are not contiguous: ' + repr(key))
+            if previous is not None:
+                closed.add(previous)
+            order.append(key)
+            previous = key
+        grouped[key].append(row)
+    offsets = {}
+    cursor = 0
+    for key in order:
+        offsets[key] = cursor
+        cursor += len(grouped[key])
+    return dict(grouped), offsets, cursor, order
+
+
+def localize_global_s2_prefixes(events_by_episode, offsets, lengths, total_actions):
+    """Add a per-episode S2 action prefix while preserving the recorded global count."""
+    localized = {}
+    for key, rows in events_by_episode.items():
+        if key not in offsets or key not in lengths:
+            raise ValueError('S2 call references an episode absent from native actions: ' + repr(key))
+        start = int(offsets[key])
+        end = start + int(lengths[key])
+        result = []
+        previous_global = -1
+        for source in rows:
+            global_prefix = int(source['native_action_prefix_count'])
+            if not 0 <= global_prefix <= int(total_actions):
+                raise ValueError(
+                    'Global S2 action prefix outside full native trace: '
+                    + repr(key) + ' prefix=' + str(global_prefix)
+                    + ' total=' + str(total_actions))
+            if global_prefix < previous_global:
+                raise ValueError('S2 global action prefixes decrease within episode: ' + repr(key))
+            previous_global = global_prefix
+            local_prefix = global_prefix - start
+            if not 0 <= local_prefix <= int(lengths[key]):
+                raise ValueError(
+                    'Global S2 action prefix does not fall within its episode action block: '
+                    + repr(key) + ' global_prefix=' + str(global_prefix)
+                    + ' episode_global_interval=[' + str(start) + ',' + str(end) + ']'
+                    + ' episode_actions=' + str(lengths[key])
+                    + ' total_actions=' + str(total_actions))
+            row = dict(source)
+            row['native_action_prefix_count_global'] = global_prefix
+            row['native_action_prefix_count_local'] = local_prefix
+            result.append(row)
+        localized[key] = result
+    return localized
 
 
 def stationary_intervals(deltas, eps=STILL_EPS):
@@ -113,7 +183,9 @@ def link_record(rec, prefix_name, s2=False):
         return None
     out = {'action_prefix_count': int(rec[prefix_name]), 'main_step': int(rec['main_step'] if s2 else rec['step'])}
     if s2:
-        out.update(call_id=rec['call_id'], call_type=rec['call_type'])
+        out.update(
+            call_id=rec['call_id'], call_type=rec['call_type'],
+            global_action_prefix_count=int(rec['native_action_prefix_count_global']))
     else:
         out.update(eligible=rec.get('eligible'))
     return out
@@ -151,7 +223,9 @@ def main():
         epis = {canonical_key(e['scene_id'],e['episode_id']):e for e in episodes}
         if len(epis) != len(episodes):
             raise ValueError('Repeated canonical episode key in '+str(native))
-        actions = collect_by_episode(native/'control/actions.jsonl')
+        action_rows = list(read_jsonl(native/'control/actions.jsonl'))
+        actions, action_offsets, total_action_rows, action_episode_order = (
+            group_ordered_action_rows(action_rows))
         report = json.loads((gates/'natural_checkpoint_report.json').read_text())
         cases = {canonical_key(*c['episode_key']):c for c in report['cases']}
         if not set(epis) == set(actions) == set(cases):
@@ -163,9 +237,24 @@ def main():
         boundaries = collect_by_episode(boundary_path, field='key')
         s2_path = native/'capture/online_decisions.jsonl'
         has_s2 = s2_path.is_file()
-        s2_events = collect_by_episode(s2_path, field='episode_key') if has_s2 else {}
+        if has_s2:
+            s2_rows = list(read_jsonl(s2_path))
+            global_prefixes = [int(r['native_action_prefix_count']) for r in s2_rows]
+            if any(b < a for a, b in zip(global_prefixes, global_prefixes[1:])):
+                raise ValueError('Native S2 global action-prefix counter is not monotonic')
+            s2_events = defaultdict(list)
+            for row in s2_rows:
+                s2_events[record_key(row, 'episode_key')].append(row)
+            s2_events = localize_global_s2_prefixes(
+                dict(s2_events), action_offsets,
+                {k: len(v) for k, v in actions.items()}, total_action_rows)
+        else:
+            s2_events = {}
         audit_meta['sources'][cohort]={'paired':str(root),'native':str(native),'gate':str(gates),
-                                       'true_s2_calls_captured':bool(has_s2)}
+                                       'true_s2_calls_captured':bool(has_s2),
+                                       'native_action_trace_rows':total_action_rows,
+                                       'native_action_episode_order':[list(k) for k in action_episode_order],
+                                       's2_action_prefix_semantics':'global_run_offset; localized per episode by exact action-log block'}
         if len(episodes) != 12:
             raise ValueError(f'Expected 12 pre-registered episodes in {cohort}, saw {len(episodes)}')
 
@@ -187,11 +276,17 @@ def main():
             prefix = gate.get('prefix_action_count') if gate else None
             bnd = boundaries.get(k,[])
             s2 = s2_events.get(k,[])
-            for seq, prefix_name in [(bnd,'prefix_action_count'),(s2,'native_action_prefix_count')]:
-                if any(int(x[prefix_name])<0 or int(x[prefix_name])>len(rows) for x in seq):
-                    raise ValueError(f'Out-of-range boundary action prefix: {cohort} {k}')
+            # Main-loop boundary prefixes are episode-local. S2 recorder prefixes
+            # are run-global and were explicitly localized above.
+            for boundary in bnd:
+                value = int(boundary['prefix_action_count'])
+                if not 0 <= value <= len(rows):
+                    raise ValueError(
+                        'Episode-local boundary action prefix outside native trace: '
+                        + repr((cohort, k)) + ' prefix=' + str(value)
+                        + ' episode_actions=' + str(len(rows)))
             bnd.sort(key=lambda r:int(r['prefix_action_count']))
-            s2.sort(key=lambda r:int(r['native_action_prefix_count']))
+            s2.sort(key=lambda r:int(r['native_action_prefix_count_local']))
 
             def register(kind, start, end, *, evidence):
                 if not (0<=start<=end<=len(rows)):
@@ -213,8 +308,8 @@ def main():
                     'gate_action_count':prefix,
                     'preceding_main_loop_boundary':link_record(preceding(bnd,start,'prefix_action_count'),'prefix_action_count'),
                     'following_main_loop_boundary':link_record(following(bnd,start,'prefix_action_count'),'prefix_action_count'),
-                    'preceding_actual_s2':link_record(preceding(s2,start,'native_action_prefix_count'),'native_action_prefix_count',True),
-                    'following_actual_s2':link_record(following(s2,start,'native_action_prefix_count'),'native_action_prefix_count',True),
+                    'preceding_actual_s2':link_record(preceding(s2,start,'native_action_prefix_count_local'),'native_action_prefix_count_local',True),
+                    'following_actual_s2':link_record(following(s2,start,'native_action_prefix_count_local'),'native_action_prefix_count_local',True),
                     'true_s2_log_available':has_s2,
                     'evidence_OFFLINE_ONLY':evidence,
                 }
