@@ -154,6 +154,28 @@ class SelectionTests(unittest.TestCase):
         self.assertIn("paired_same_main_step", reasons[2])
         self.assertEqual(summary["primary_run_length"], 3)
 
+    def test_event_boundary_calls_are_added_even_when_not_run_samples(self):
+        key = ("scene_a", "1")
+        rows = [
+            call(0, key, 0, "ordinary", "→", main_step=0),
+            call(1, key, 10, "ordinary", "←←", main_step=1),
+            call(2, key, 20, "ordinary", "←←", main_step=2),
+            call(3, key, 30, "ordinary", "←←", main_step=3),
+            call(4, key, 90, "ordinary", "STOP", main_step=4),
+        ]
+        spec = {
+            "key": key, "window": (0, 100),
+            "event_start": 25, "event_end": 80,
+            "primary": {"call_type": "ordinary", "model_output": "←←",
+                        "minimum_run": 3, "sample_indices": (0, 2)},
+            "secondary": None, "special_outputs": (),
+        }
+        selected, _ = exporter.select_target_calls({key: rows}, spec)
+        by_id = {x["call"]["call_id"]: x["reasons"] for x in selected}
+        self.assertIn("event_start_nearest_before", by_id[2])
+        self.assertIn("event_start_nearest_after", by_id[3])
+        self.assertIn("event_end_nearest_after", by_id[4])
+
     def test_selection_rejects_shorter_than_locked_run(self):
         key = ("scene_a", "1")
         rows = [call(i, key, i, "ordinary", "↓") for i in range(2)]
