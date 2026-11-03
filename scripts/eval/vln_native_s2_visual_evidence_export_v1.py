@@ -30,6 +30,7 @@ TARGETS = (
         "key": ("VLzqgDo317F", "58"),
         "role": "native_failure_stagnation",
         "window": (193, 2671),
+        "event_start": 257, "event_end": 2671,
         "primary": {"call_type": "ordinary", "model_output": "↓", "minimum_run": 50,
                     "sample_indices": (0, 25, 51)},
         "secondary": {"call_type": "lookdown_followup", "model_output": "371 170",
@@ -42,6 +43,7 @@ TARGETS = (
         "key": ("i5noydFURQK", "70"),
         "role": "native_failure_near_goal_departure",
         "window": (209, 875),
+        "event_start": 209, "event_end": 875,
         "primary": {"call_type": "ordinary", "model_output": "←←←←", "minimum_run": 32,
                     "sample_indices": (0, 1, 5, 6, 15, 31)},
         "secondary": None,
@@ -64,6 +66,7 @@ TARGETS = (
         "key": ("82sE5b5pLXE", "22"),
         "role": "scene_disjoint_success_turning_control",
         "window": (204, 380),
+        "event_start": 204, "event_end": 380,
         "primary": {"call_type": "ordinary", "model_output": "←←←←", "minimum_run": 5,
                     "sample_indices": (0, 2, 4)},
         "secondary": None,
@@ -269,6 +272,27 @@ def select_target_calls(all_calls, spec):
     after = [c for c in calls if int(c["call_id"]) > int(run_last["call_id"])]
     for call in after[:2]:
         add_selected(selected, call, "post_run_transition")
+
+    # Anchor the evidence to the independently audited native action interval.
+    # These are retrospective export anchors, never online detection features.
+    for boundary_name in ("event_start", "event_end"):
+        boundary = spec.get(boundary_name)
+        if boundary is None:
+            continue
+        before_boundary = [
+            c for c in calls
+            if int(c["action_prefix_count_episode"]) <= int(boundary)
+        ]
+        after_boundary = [
+            c for c in calls
+            if int(c["action_prefix_count_episode"]) >= int(boundary)
+        ]
+        if before_boundary:
+            nearest = before_boundary[-1]
+            add_selected(selected, nearest, boundary_name + "_nearest_before")
+        if after_boundary:
+            nearest = after_boundary[0]
+            add_selected(selected, nearest, boundary_name + "_nearest_after")
 
     secondary_spec = spec.get("secondary")
     secondary_run = []
@@ -496,6 +520,8 @@ def export(args):
         target_manifest.append({
             "cohort": spec["cohort"], "episode_key": list(spec["key"]),
             "role": spec["role"], "evidence_window_episode_actions": list(spec["window"]),
+            "event_start_action": spec.get("event_start"),
+            "event_end_action": spec.get("event_end"),
             "primary_pattern": spec["primary"],
             "secondary_pattern": spec.get("secondary"),
             "run_summary": run_summary,
