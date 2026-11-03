@@ -451,6 +451,7 @@ def export(args):
     output.mkdir(parents=True, exist_ok=False)
     image_rows = []
     selected_rows = []
+    copied_images = {}
     for spec, source, chosen, run_summary in target_plans:
         scene, episode = spec["key"]
         for item in chosen:
@@ -466,13 +467,14 @@ def export(args):
                 ref = prepared["ref"]
                 image_index = prepared["image_index"]
                 digest = ref["pixel_sha256"]
-                folder = Path("images") / spec["cohort"] / (scene + "_" + episode)
-                filename = "call_{:04d}_img_{:02d}_{}.png".format(
-                    int(call["call_id"]), image_index, digest[:12])
-                relative_output = folder / filename
-                destination = output / relative_output
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(str(prepared["source_image"]), str(destination))
+                if digest not in copied_images:
+                    relative_output = Path("images") / (digest + ".png")
+                    destination = output / relative_output
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(str(prepared["source_image"]), str(destination))
+                    copied_images[digest] = relative_output.as_posix()
+                else:
+                    relative_output = Path(copied_images[digest])
 
                 if call["call_type"] == "ordinary":
                     role = "ordinary_current_rgb" if image_index == len(call["images"]) - 1 else "ordinary_history_context"
@@ -549,6 +551,7 @@ def export(args):
         "N_selected_calls": len(selected_rows),
         "N_exported_image_occurrences": len(image_rows),
         "N_unique_pixel_hashes": len(set(x["pixel_sha256"] for x in image_rows)),
+        "N_unique_image_files_written": len(copied_images),
         "files": ["selected_calls.jsonl", "image_manifest.jsonl", "images/"],
     }
     (output / "export_manifest.json").write_text(
