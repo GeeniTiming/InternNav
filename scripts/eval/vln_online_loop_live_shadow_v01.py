@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-from collections import Counter
 from pathlib import Path
 
 from vln_online_loop_monitor_v01 import (
@@ -134,8 +133,9 @@ class LiveShadowSink:
             "alarm_is_candidate_only": True,
             "source_action_trace_equivalence_to_external_uninstrumented_run": "NOT_TESTED",
         }
-        (self.capture_root / SUMMARY).open("x", encoding="utf-8").write(
-            json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+        with (self.capture_root / SUMMARY).open("x", encoding="utf-8") as output:
+            output.write(
+                json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
         return result
 
 
@@ -184,7 +184,6 @@ def verify_run(run_dir):
     monitor = OnlineDecisionVisualLoopMonitor(config)
     expected_events = []
     ordinary = followups = 0
-    previous_call_id = -1
     for i, (raw, live) in enumerate(zip(original, live_timeline)):
         if raw["call_id"] != i:
             raise ValueError("S2 call IDs must equal capture row indices")
@@ -241,8 +240,9 @@ def main():
     if dest.exists():
         raise FileExistsError("Create-only live-shadow verification report exists: " + str(dest))
     dest.parent.mkdir(parents=True, exist_ok=True)
-    dest.open("x", encoding="utf-8").write(
-        json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
+    with dest.open("x", encoding="utf-8") as output:
+        output.write(
+            json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True) + "\n")
     print(report["status"])
     print("EPISODES:", report["N_episodes"],
           "S2_CALLS:", report["N_decisions"],
