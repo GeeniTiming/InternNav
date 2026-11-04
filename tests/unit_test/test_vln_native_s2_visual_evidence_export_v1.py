@@ -46,6 +46,28 @@ def call(call_id, key, offset, call_type="ordinary", output="→", main_step=Non
     }
 
 
+def localized_selection_rows(raw_rows):
+    """Exercise the real raw-S2 -> episode-local offset conversion.
+
+    Selection operates on localize_call_records() output, never the raw
+    capture/online_decisions.jsonl schema. Synthetic action rows keep the
+    single-episode test fixture self-contained without inventing offsets.
+    """
+    if not raw_rows:
+        return []
+    key = tuple(raw_rows[0]["episode_key"])
+    if any(tuple(r["episode_key"]) != key for r in raw_rows):
+        raise ValueError("Selection fixture mixes episode identities")
+    action_count = max(int(r["native_action_prefix_count"]) for r in raw_rows) + 1
+    native_actions = [action(*key) for _ in range(action_count)]
+    grouped, offsets, total, _ = exporter.group_action_rows(native_actions)
+    localized = exporter.localize_call_records(
+        raw_rows, offsets,
+        {k: len(v) for k, v in grouped.items()}, total,
+    )
+    return localized[key]
+
+
 class ActionOffsetTests(unittest.TestCase):
     def test_episode_global_action_offsets_follow_native_file_order(self):
         rows = (
@@ -125,6 +147,7 @@ class SelectionTests(unittest.TestCase):
             call(5, key, 5, "ordinary", "←←←←"),
             call(6, key, 6, "ordinary", "→"),
         ]
+        rows = localized_selection_rows(rows)
         run = exporter.longest_output_run(rows, "ordinary", "←←←←", 0, 10)
         self.assertEqual([x["call_id"] for x in run], [1, 3, 4, 5])
         sampled = exporter.sample_run(run, (0, 2, 3))
@@ -147,7 +170,7 @@ class SelectionTests(unittest.TestCase):
                         "minimum_run": 3, "sample_indices": (0, 1, 2)},
             "secondary": None, "special_outputs": (),
         }
-        selected, summary = exporter.select_target_calls({key: rows}, spec)
+        selected, summary = exporter.select_target_calls({key: localized_selection_rows(rows)}, spec)
         ids = [x["call"]["call_id"] for x in selected]
         self.assertEqual(set(ids), {0, 1, 2, 3, 4, 5, 6})
         reasons = {x["call"]["call_id"]: x["reasons"] for x in selected}
@@ -170,7 +193,7 @@ class SelectionTests(unittest.TestCase):
                         "minimum_run": 3, "sample_indices": (0, 2)},
             "secondary": None, "special_outputs": (),
         }
-        selected, _ = exporter.select_target_calls({key: rows}, spec)
+        selected, _ = exporter.select_target_calls({key: localized_selection_rows(rows)}, spec)
         by_id = {x["call"]["call_id"]: x["reasons"] for x in selected}
         self.assertIn("event_start_nearest_before", by_id[2])
         self.assertIn("event_start_nearest_after", by_id[3])
@@ -186,7 +209,7 @@ class SelectionTests(unittest.TestCase):
             "secondary": None, "special_outputs": (),
         }
         with self.assertRaisesRegex(ValueError, "Primary repeated-output run too short"):
-            exporter.select_target_calls({key: rows}, spec)
+            exporter.select_target_calls({key: localized_selection_rows(rows)}, spec)
 
 
 class ImageIntegrityTests(unittest.TestCase):
