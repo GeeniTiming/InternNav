@@ -225,7 +225,7 @@ def instrument_loop(function):
 class DecisionRecorder:
     """Passive, write-once image catalog + one JSONL record per actual generate."""
 
-    def __init__(self, evaluator, run_dir, manifest):
+    def __init__(self, evaluator, run_dir, manifest, shadow_monitor=False):
         self.evaluator, self.root, self.manifest = evaluator, Path(run_dir), manifest
         self.allowed_episode_keys = locked_episode_keys(manifest)
         self.capture = self.root / "capture"
@@ -234,6 +234,12 @@ class DecisionRecorder:
         self.images_dir.mkdir(exist_ok=False)
         self.rows = (self.capture / "online_decisions.jsonl").open("x", encoding="utf-8")
         self.poses = (self.capture / "OFFLINE_ONLY_poses.jsonl").open("x", encoding="utf-8")
+        # Explicit opt-in only. Disabled runs preserve the original output contract.
+        # Import is deferred so normal Native capture has no monitor dependency.
+        self.shadow_sink = None
+        if shadow_monitor:
+            from vln_online_loop_live_shadow_v01 import LiveShadowSink
+            self.shadow_sink = LiveShadowSink(self.capture)
         self.original_step = evaluator.env.step
         self.action_count = 0
         self.next_call = 0
@@ -326,6 +332,10 @@ class DecisionRecorder:
         row["model_output"] = str(output)
         row["native_parsed_actions"] = [int(v) for v in self.evaluator.parse_actions(str(output))]
         validate_online_row(row)
+        if self.shadow_sink is not None:
+            # Observe the already-decoded native S2 result; return value is
+            # deliberately ignored. No policy/history/actuator changes.
+            self.shadow_sink.observe(row)
         self.rows.write(json.dumps(row, ensure_ascii=False) + "\n")
         self.rows.flush()
         key = tuple(row["episode_key"])
@@ -340,6 +350,8 @@ class DecisionRecorder:
             error = error or "Partial System-2 call has no decoded output"
         self.rows.close()
         self.poses.close()
+        if self.shadow_sink is not None:
+            self.shadow_sink.close(error)
         pilot.write_json(self.capture / "capture_summary.json", {
             "schema": SCHEMA,
             "status": self.status,
@@ -374,7 +386,9 @@ def run(args):
 
     def init(evaluator, config):
         original_init(evaluator, config)
-        rec = DecisionRecorder(evaluator, root, manifest)
+        rec = DecisionRecorder(
+            evaluator, root, manifest,
+            shadow_monitor=bool(getattr(args, "shadow_monitor", False)))
         recorders.append(rec)
         evaluator._evidence_recorder = rec
         evaluator.env.step = rec.step
@@ -484,6 +498,10 @@ def main(argv=None):
     for name, func in (("run", run), ("report", report)):
         p = subs.add_parser(name)
         p.add_argument("--run-dir", required=True)
+        if name == "run":
+            p.add_argument(
+                "--shadow-monitor", action="store_true",
+                help="Opt-in passive S2 visual-loop logging in new capture runs")
         p.set_defaults(function=func)
     args = parser.parse_args(argv)
     args.function(args)
